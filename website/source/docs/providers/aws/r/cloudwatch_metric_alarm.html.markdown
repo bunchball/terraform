@@ -45,13 +45,16 @@ resource "aws_cloudwatch_metric_alarm" "bat" {
     period = "120"
     statistic = "Average"
     threshold = "80"
+    dimensions {
+        AutoScalingGroupName = "${aws_autoscaling_group.bar.name}"
+    }
     alarm_description = "This metric monitor ec2 cpu utilization"
     alarm_actions = ["${aws_autoscaling_policy.bat.arn}"]
 }
 ```
 ## Argument Reference
 
-See [related part of AWS Docs](http://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutMetricAlarm.html)
+See [related part of AWS Docs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/APIReference/API_PutMetricAlarm.html)
 for details about valid values.
 
 The following arguments are supported:
@@ -60,7 +63,9 @@ The following arguments are supported:
 * `comparison_operator` - (Required) The arithmetic operation to use when comparing the specified Statistic and Threshold. The specified Statistic value is used as the first operand. Either of the following is supported: `GreaterThanOrEqualToThreshold`, `GreaterThanThreshold`, `LessThanThreshold`, `LessThanOrEqualToThreshold`.
 * `evaluation_periods` - (Required) The number of periods over which data is compared to the specified threshold.
 * `metric_name` - (Required) The name for the alarm's associated metric.
-  See docs for [supported metrics](http://docs.aws.amazon.com/AmazonCloudWatch/latest/DeveloperGuide/CW_Support_For_AWS.html).
+  See docs for [supported metrics](https://docs.aws.amazon.com/AmazonCloudWatch/latest/DeveloperGuide/CW_Support_For_AWS.html).
+* `namespace` - (Required) The namespace for the alarm's associated metric. See docs for the [list of namespaces](https://docs.aws.amazon.com/AmazonCloudWatch/latest/DeveloperGuide/aws-namespaces.html).
+  See docs for [supported metrics](https://docs.aws.amazon.com/AmazonCloudWatch/latest/DeveloperGuide/CW_Support_For_AWS.html).
 * `namespace` - (Required) The namespace for the alarm's associated metric.
 * `period` - (Required) The period in seconds over which the specified `statistic` is applied.
 * `statistic` - (Required) The statistic to apply to the alarm's associated metric.

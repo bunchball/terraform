@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/service/iam"
 	"github.com/aws/aws-sdk-go/service/rds"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -22,26 +23,16 @@ func resourceAwsDbSubnetGroup() *schema.Resource {
 		Delete: resourceAwsDbSubnetGroupDelete,
 
 		Schema: map[string]*schema.Schema{
-			"name": &schema.Schema{
+			"arn": &schema.Schema{
 				Type:     schema.TypeString,
-				ForceNew: true,
-				Required: true,
-				ValidateFunc: func(v interface{}, k string) (ws []string, errors []error) {
-					value := v.(string)
-					if !regexp.MustCompile(`^[.0-9A-Za-z-_]+$`).MatchString(value) {
-						errors = append(errors, fmt.Errorf(
-							"only alphanumeric characters, hyphens, underscores, and periods allowed in %q", k))
-					}
-					if len(value) > 255 {
-						errors = append(errors, fmt.Errorf(
-							"%q cannot be longer than 255 characters", k))
-					}
-					if regexp.MustCompile(`(?i)^default$`).MatchString(value) {
-						errors = append(errors, fmt.Errorf(
-							"%q is not allowed as %q", "Default", k))
-					}
-					return
-				},
+				Computed: true,
+			},
+
+			"name": &schema.Schema{
+				Type:         schema.TypeString,
+				ForceNew:     true,
+				Required:     true,
+				ValidateFunc: validateSubnetGroupName,
 			},
 
 			"description": &schema.Schema{
@@ -56,12 +47,15 @@ func resourceAwsDbSubnetGroup() *schema.Resource {
 				Elem:     &schema.Schema{Type: schema.TypeString},
 				Set:      schema.HashString,
 			},
+
+			"tags": tagsSchema(),
 		},
 	}
 }
 
 func resourceAwsDbSubnetGroupCreate(d *schema.ResourceData, meta interface{}) error {
 	rdsconn := meta.(*AWSClient).rdsconn
+	tags := tagsFromMapRDS(d.Get("tags").(map[string]interface{}))
 
 	subnetIdsSet := d.Get("subnet_ids").(*schema.Set)
 	subnetIds := make([]*string, subnetIdsSet.Len())
@@ -73,6 +67,7 @@ func resourceAwsDbSubnetGroupCreate(d *schema.ResourceData, meta interface{}) er
 		DBSubnetGroupName:        aws.String(d.Get("name").(string)),
 		DBSubnetGroupDescription: aws.String(d.Get("description").(string)),
 		SubnetIds:                subnetIds,
+		Tags:                     tags,
 	}
 
 	log.Printf("[DEBUG] Create DB Subnet Group: %#v", createOpts)
@@ -121,14 +116,37 @@ func resourceAwsDbSubnetGroupRead(d *schema.ResourceData, meta interface{}) erro
 		return fmt.Errorf("Unable to find DB Subnet Group: %#v", describeResp.DBSubnetGroups)
 	}
 
-	d.Set("name", d.Id())
-	d.Set("description", *subnetGroup.DBSubnetGroupDescription)
+	d.Set("name", subnetGroup.DBSubnetGroupName)
+	d.Set("description", subnetGroup.DBSubnetGroupDescription)
 
 	subnets := make([]string, 0, len(subnetGroup.Subnets))
 	for _, s := range subnetGroup.Subnets {
 		subnets = append(subnets, *s.SubnetIdentifier)
 	}
 	d.Set("subnet_ids", subnets)
+
+	// list tags for resource
+	// set tags
+	conn := meta.(*AWSClient).rdsconn
+	arn, err := buildRDSsubgrpARN(d, meta)
+	if err != nil {
+		log.Printf("[DEBUG] Error building ARN for DB Subnet Group, not setting Tags for group %s", *subnetGroup.DBSubnetGroupName)
+	} else {
+		d.Set("arn", arn)
+		resp, err := conn.ListTagsForResource(&rds.ListTagsForResourceInput{
+			ResourceName: aws.String(arn),
+		})
+
+		if err != nil {
+			log.Printf("[DEBUG] Error retreiving tags for ARN: %s", arn)
+		}
+
+		var dt []*rds.Tag
+		if len(resp.TagList) > 0 {
+			dt = resp.TagList
+		}
+		d.Set("tags", tagsToMapRDS(dt))
+	}
 
 	return nil
 }
@@ -156,6 +174,15 @@ func resourceAwsDbSubnetGroupUpdate(d *schema.ResourceData, meta interface{}) er
 			return err
 		}
 	}
+
+	if arn, err := buildRDSsubgrpARN(d, meta); err == nil {
+		if err := setTagsRDS(conn, d, arn); err != nil {
+			return err
+		} else {
+			d.SetPartial("tags")
+		}
+	}
+
 	return resourceAwsDbSubnetGroupRead(d, meta)
 }
 
@@ -195,4 +222,35 @@ func resourceAwsDbSubnetGroupDeleteRefreshFunc(
 
 		return d, "destroyed", nil
 	}
+}
+
+func buildRDSsubgrpARN(d *schema.ResourceData, meta interface{}) (string, error) {
+	iamconn := meta.(*AWSClient).iamconn
+	region := meta.(*AWSClient).region
+	// An zero value GetUserInput{} defers to the currently logged in user
+	resp, err := iamconn.GetUser(&iam.GetUserInput{})
+	if err != nil {
+		return "", err
+	}
+	userARN := *resp.User.Arn
+	accountID := strings.Split(userARN, ":")[4]
+	arn := fmt.Sprintf("arn:aws:rds:%s:%s:subgrp:%s", region, accountID, d.Id())
+	return arn, nil
+}
+
+func validateSubnetGroupName(v interface{}, k string) (ws []string, errors []error) {
+	value := v.(string)
+	if !regexp.MustCompile(`^[ .0-9a-z-_]+$`).MatchString(value) {
+		errors = append(errors, fmt.Errorf(
+			"only alphanumeric characters, hyphens, underscores, periods, and spaces allowed in %q", k))
+	}
+	if len(value) > 255 {
+		errors = append(errors, fmt.Errorf(
+			"%q cannot be longer than 255 characters", k))
+	}
+	if regexp.MustCompile(`(?i)^default$`).MatchString(value) {
+		errors = append(errors, fmt.Errorf(
+			"%q is not allowed as %q", "Default", k))
+	}
+	return
 }

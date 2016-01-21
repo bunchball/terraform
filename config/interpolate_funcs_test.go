@@ -11,6 +11,169 @@ import (
 	"github.com/hashicorp/terraform/config/lang/ast"
 )
 
+func TestInterpolateFuncCompact(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			// empty string within array
+			{
+				`${compact(split(",", "a,,b"))}`,
+				NewStringList([]string{"a", "b"}).String(),
+				false,
+			},
+
+			// empty string at the end of array
+			{
+				`${compact(split(",", "a,b,"))}`,
+				NewStringList([]string{"a", "b"}).String(),
+				false,
+			},
+
+			// single empty string
+			{
+				`${compact(split(",", ""))}`,
+				NewStringList([]string{}).String(),
+				false,
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncCidrHost(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${cidrhost("192.168.1.0/24", 5)}`,
+				"192.168.1.5",
+				false,
+			},
+			{
+				`${cidrhost("192.168.1.0/30", 255)}`,
+				nil,
+				true, // 255 doesn't fit in two bits
+			},
+			{
+				`${cidrhost("not-a-cidr", 6)}`,
+				nil,
+				true, // not a valid CIDR mask
+			},
+			{
+				`${cidrhost("10.256.0.0/8", 6)}`,
+				nil,
+				true, // can't have an octet >255
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncCidrNetmask(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${cidrnetmask("192.168.1.0/24")}`,
+				"255.255.255.0",
+				false,
+			},
+			{
+				`${cidrnetmask("192.168.1.0/32")}`,
+				"255.255.255.255",
+				false,
+			},
+			{
+				`${cidrnetmask("0.0.0.0/0")}`,
+				"0.0.0.0",
+				false,
+			},
+			{
+				// This doesn't really make sense for IPv6 networks
+				// but it ought to do something sensible anyway.
+				`${cidrnetmask("1::/64")}`,
+				"ffff:ffff:ffff:ffff::",
+				false,
+			},
+			{
+				`${cidrnetmask("not-a-cidr")}`,
+				nil,
+				true, // not a valid CIDR mask
+			},
+			{
+				`${cidrnetmask("10.256.0.0/8")}`,
+				nil,
+				true, // can't have an octet >255
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncCidrSubnet(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${cidrsubnet("192.168.2.0/20", 4, 6)}`,
+				"192.168.6.0/24",
+				false,
+			},
+			{
+				`${cidrsubnet("fe80::/48", 16, 6)}`,
+				"fe80:0:0:6::/64",
+				false,
+			},
+			{
+				// IPv4 address encoded in IPv6 syntax gets normalized
+				`${cidrsubnet("::ffff:192.168.0.0/112", 8, 6)}`,
+				"192.168.6.0/24",
+				false,
+			},
+			{
+				`${cidrsubnet("192.168.0.0/30", 4, 6)}`,
+				nil,
+				true, // not enough bits left
+			},
+			{
+				`${cidrsubnet("192.168.0.0/16", 2, 16)}`,
+				nil,
+				true, // can't encode 16 in 2 bits
+			},
+			{
+				`${cidrsubnet("not-a-cidr", 4, 6)}`,
+				nil,
+				true, // not a valid CIDR mask
+			},
+			{
+				`${cidrsubnet("10.256.0.0/8", 4, 6)}`,
+				nil,
+				true, // can't have an octet >255
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncCoalesce(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${coalesce("first", "second", "third")}`,
+				"first",
+				false,
+			},
+			{
+				`${coalesce("", "second", "third")}`,
+				"second",
+				false,
+			},
+			{
+				`${coalesce("", "", "")}`,
+				"",
+				false,
+			},
+			{
+				`${coalesce("foo")}`,
+				nil,
+				true,
+			},
+		},
+	})
+}
+
 func TestInterpolateFuncDeprecatedConcat(t *testing.T) {
 	testFunction(t, testFunctionConfig{
 		Cases: []testFunctionCase{
@@ -370,6 +533,12 @@ func TestInterpolateFuncLength(t *testing.T) {
 				"5",
 				false,
 			},
+			// Want length 0 if we split an empty string then compact
+			{
+				`${length(compact(split(",", "")))}`,
+				"0",
+				false,
+			},
 		},
 	})
 }
@@ -612,6 +781,78 @@ func TestInterpolateFuncBase64Decode(t *testing.T) {
 				`${base64decode("this-is-an-invalid-base64-data")}`,
 				nil,
 				true,
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncLower(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${lower("HELLO")}`,
+				"hello",
+				false,
+			},
+
+			{
+				`${lower("")}`,
+				"",
+				false,
+			},
+
+			{
+				`${lower()}`,
+				nil,
+				true,
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncUpper(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${upper("hello")}`,
+				"HELLO",
+				false,
+			},
+
+			{
+				`${upper("")}`,
+				"",
+				false,
+			},
+
+			{
+				`${upper()}`,
+				nil,
+				true,
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncSha1(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${sha1("test")}`,
+				"a94a8fe5ccb19ba61c4c0873d391e987982fbbd3",
+				false,
+			},
+		},
+	})
+}
+
+func TestInterpolateFuncSha256(t *testing.T) {
+	testFunction(t, testFunctionConfig{
+		Cases: []testFunctionCase{
+			{
+				`${sha256("test")}`,
+				"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+				false,
 			},
 		},
 	})

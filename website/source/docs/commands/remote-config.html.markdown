@@ -16,7 +16,7 @@ disk. When remote state storage is enabled, Terraform will automatically
 fetch the latest state from the remote server when necessary and if any
 updates are made, the newest state is persisted back to the remote server.
 In this mode, users do not need to durably store the state using version
-control or shared storaged.
+control or shared storage.
 
 ## Usage
 
@@ -40,41 +40,16 @@ below this section for more details.
 When remote storage is disabled, the existing remote state is migrated
 to a local file. This defaults to the `-state` path during restore.
 
-The following backends are supported:
-
-* Atlas - Stores the state in Atlas. Requires the `name` and `access_token`
-  variables. The `address` variable can optionally be provided.
-
-* Consul - Stores the state in the KV store at a given path.
-  Requires the `path` variable. The `address` and `access_token`
-  variables can optionally be provided. Address is assumed to be the
-  local agent if not provided.
-
-* S3 - Stores the state as a given key in a given bucket on Amazon S3.
-  Requires the `bucket` and `key` variables. Supports and honors the standard
-  AWS environment variables `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`
-  and `AWS_DEFAULT_REGION`. These can optionally be provided as parameters
-  in the `access_key`, `secret_key` and `region` variables
-  respectively, but passing credentials this way is not recommended since they
-  will be included in cleartext inside the persisted state.
-  Other supported parameters include:
-  * `bucket` - the name of the S3 bucket
-  * `key` - path where to place/look for state file inside the bucket
-  * `encrypt` - whether to enable [server side encryption](http://docs.aws.amazon.com/AmazonS3/latest/dev/UsingServerSideEncryption.html)
-    of the state file
-  * `acl` - [Canned ACL](http://docs.aws.amazon.com/AmazonS3/latest/dev/acl-overview.html#canned-acl)
-    to be applied to the state file.
-
-* HTTP - Stores the state using a simple REST client. State will be fetched
-  via GET, updated via POST, and purged with DELETE. Requires the `address` variable.
+Supported storage backends and supported features of those
+are documented in the [Remote State](/docs/state/remote/index.html) section.
 
 The command-line flags are all optional. The list of available flags are:
 
-* `-backend=Atlas` - The remote backend to use. Must be one of the above
+* `-backend=Atlas` - The remote backend to use. Must be one of the
   supported backends.
 
 * `-backend-config="k=v"` - Specify a configuration variable for a backend.
-  This is how you set the required variables for the backends above.
+  This is how you set the required variables for the backend.
 
 * `-backup=path` - Path to backup the existing state file before
   modifying. Defaults to the "-state" path with ".backup" extension.

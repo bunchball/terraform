@@ -4,17 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/cloudformation"
+	"github.com/aws/aws-sdk-go/service/directoryservice"
 	"github.com/aws/aws-sdk-go/service/ec2"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"github.com/aws/aws-sdk-go/service/elasticache"
 	elasticsearch "github.com/aws/aws-sdk-go/service/elasticsearchservice"
 	"github.com/aws/aws-sdk-go/service/elb"
 	"github.com/aws/aws-sdk-go/service/rds"
+	"github.com/aws/aws-sdk-go/service/redshift"
 	"github.com/aws/aws-sdk-go/service/route53"
 	"github.com/hashicorp/terraform/helper/schema"
 )
@@ -42,7 +44,23 @@ func expandListeners(configured []interface{}) ([]*elb.Listener, error) {
 			l.SSLCertificateId = aws.String(v.(string))
 		}
 
-		listeners = append(listeners, l)
+		var valid bool
+		if l.SSLCertificateId != nil && *l.SSLCertificateId != "" {
+			// validate the protocol is correct
+			for _, p := range []string{"https", "ssl"} {
+				if (*l.InstanceProtocol == p) || (*l.Protocol == p) {
+					valid = true
+				}
+			}
+		} else {
+			valid = true
+		}
+
+		if valid {
+			listeners = append(listeners, l)
+		} else {
+			return nil, fmt.Errorf("[ERR] ELB Listener: ssl_certificate_id may be set only when protocol is 'https' or 'ssl'")
+		}
 	}
 
 	return listeners, nil
@@ -60,9 +78,13 @@ func expandEcsVolumes(configured []interface{}) ([]*ecs.Volume, error) {
 
 		l := &ecs.Volume{
 			Name: aws.String(data["name"].(string)),
-			Host: &ecs.HostVolumeProperties{
-				SourcePath: aws.String(data["host_path"].(string)),
-			},
+		}
+
+		hostPath := data["host_path"].(string)
+		if hostPath != "" {
+			l.Host = &ecs.HostVolumeProperties{
+				SourcePath: aws.String(hostPath),
+			}
 		}
 
 		volumes = append(volumes, l)
@@ -211,6 +233,29 @@ func expandParameters(configured []interface{}) ([]*rds.Parameter, error) {
 	return parameters, nil
 }
 
+func expandRedshiftParameters(configured []interface{}) ([]*redshift.Parameter, error) {
+	var parameters []*redshift.Parameter
+
+	// Loop over our configured parameters and create
+	// an array of aws-sdk-go compatabile objects
+	for _, pRaw := range configured {
+		data := pRaw.(map[string]interface{})
+
+		if data["name"].(string) == "" {
+			continue
+		}
+
+		p := &redshift.Parameter{
+			ParameterName:  aws.String(data["name"].(string)),
+			ParameterValue: aws.String(data["value"].(string)),
+		}
+
+		parameters = append(parameters, p)
+	}
+
+	return parameters, nil
+}
+
 // Takes the result of flatmap.Expand for an array of parameters and
 // returns Parameter API compatible objects
 func expandElastiCacheParameters(configured []interface{}) ([]*elasticache.ParameterNameValue, error) {
@@ -230,6 +275,30 @@ func expandElastiCacheParameters(configured []interface{}) ([]*elasticache.Param
 	}
 
 	return parameters, nil
+}
+
+// Flattens an access log into something that flatmap.Flatten() can handle
+func flattenAccessLog(l *elb.AccessLog) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, 1)
+
+	if l != nil && *l.Enabled {
+		r := make(map[string]interface{})
+		if l.S3BucketName != nil {
+			r["bucket"] = *l.S3BucketName
+		}
+
+		if l.S3BucketPrefix != nil {
+			r["bucket_prefix"] = *l.S3BucketPrefix
+		}
+
+		if l.EmitInterval != nil {
+			r["interval"] = *l.EmitInterval
+		}
+
+		result = append(result, r)
+	}
+
+	return result
 }
 
 // Flattens a health check into something that flatmap.Flatten()
@@ -312,9 +381,13 @@ func flattenEcsVolumes(list []*ecs.Volume) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(list))
 	for _, volume := range list {
 		l := map[string]interface{}{
-			"name":      *volume.Name,
-			"host_path": *volume.Host.SourcePath,
+			"name": *volume.Name,
 		}
+
+		if volume.Host.SourcePath != nil {
+			l["host_path"] = *volume.Host.SourcePath
+		}
+
 		result = append(result, l)
 	}
 	return result
@@ -347,6 +420,24 @@ func flattenEcsContainerDefinitions(definitions []*ecs.ContainerDefinition) (str
 
 // Flattens an array of Parameters into a []map[string]interface{}
 func flattenParameters(list []*rds.Parameter) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(list))
+	for _, i := range list {
+		if i.ParameterName != nil {
+			r := make(map[string]interface{})
+			r["name"] = strings.ToLower(*i.ParameterName)
+			// Default empty string, guard against nil parameter values
+			r["value"] = ""
+			if i.ParameterValue != nil {
+				r["value"] = strings.ToLower(*i.ParameterValue)
+			}
+			result = append(result, r)
+		}
+	}
+	return result
+}
+
+// Flattens an array of Redshift Parameters into a []map[string]interface{}
+func flattenRedshiftParameters(list []*redshift.Parameter) []map[string]interface{} {
 	result := make([]map[string]interface{}, 0, len(list))
 	for _, i := range list {
 		result = append(result, map[string]interface{}{
@@ -450,7 +541,7 @@ func expandResourceRecords(recs []interface{}, typeStr string) []*route53.Resour
 	for _, r := range recs {
 		s := r.(string)
 		switch typeStr {
-		case "TXT":
+		case "TXT", "SPF":
 			str := fmt.Sprintf("\"%s\"", s)
 			records = append(records, &route53.ResourceRecord{Value: aws.String(str)})
 		default:
@@ -458,27 +549,6 @@ func expandResourceRecords(recs []interface{}, typeStr string) []*route53.Resour
 		}
 	}
 	return records
-}
-
-func validateRdsId(v interface{}, k string) (ws []string, errors []error) {
-	value := v.(string)
-	if !regexp.MustCompile(`^[0-9a-z-]+$`).MatchString(value) {
-		errors = append(errors, fmt.Errorf(
-			"only lowercase alphanumeric characters and hyphens allowed in %q", k))
-	}
-	if !regexp.MustCompile(`^[a-z]`).MatchString(value) {
-		errors = append(errors, fmt.Errorf(
-			"first character of %q must be a letter", k))
-	}
-	if regexp.MustCompile(`--`).MatchString(value) {
-		errors = append(errors, fmt.Errorf(
-			"%q cannot contain two consecutive hyphens", k))
-	}
-	if regexp.MustCompile(`-$`).MatchString(value) {
-		errors = append(errors, fmt.Errorf(
-			"%q cannot end with a hyphen", k))
-	}
-	return
 }
 
 func expandESClusterConfig(m map[string]interface{}) *elasticsearch.ElasticsearchClusterConfig {
@@ -589,4 +659,90 @@ func stringMapToPointers(m map[string]interface{}) map[string]*string {
 		list[i] = aws.String(v.(string))
 	}
 	return list
+}
+
+func flattenDSVpcSettings(
+	s *directoryservice.DirectoryVpcSettingsDescription) []map[string]interface{} {
+	settings := make(map[string]interface{}, 0)
+
+	if s == nil {
+		return nil
+	}
+
+	settings["subnet_ids"] = schema.NewSet(schema.HashString, flattenStringList(s.SubnetIds))
+	settings["vpc_id"] = *s.VpcId
+
+	return []map[string]interface{}{settings}
+}
+
+func flattenDSConnectSettings(
+	customerDnsIps []*string,
+	s *directoryservice.DirectoryConnectSettingsDescription) []map[string]interface{} {
+	if s == nil {
+		return nil
+	}
+
+	settings := make(map[string]interface{}, 0)
+
+	settings["customer_dns_ips"] = schema.NewSet(schema.HashString, flattenStringList(customerDnsIps))
+	settings["connect_ips"] = schema.NewSet(schema.HashString, flattenStringList(s.ConnectIps))
+	settings["customer_username"] = *s.CustomerUserName
+	settings["subnet_ids"] = schema.NewSet(schema.HashString, flattenStringList(s.SubnetIds))
+	settings["vpc_id"] = *s.VpcId
+
+	return []map[string]interface{}{settings}
+}
+
+func expandCloudFormationParameters(params map[string]interface{}) []*cloudformation.Parameter {
+	var cfParams []*cloudformation.Parameter
+	for k, v := range params {
+		cfParams = append(cfParams, &cloudformation.Parameter{
+			ParameterKey:   aws.String(k),
+			ParameterValue: aws.String(v.(string)),
+		})
+	}
+
+	return cfParams
+}
+
+// flattenCloudFormationParameters is flattening list of
+// *cloudformation.Parameters and only returning existing
+// parameters to avoid clash with default values
+func flattenCloudFormationParameters(cfParams []*cloudformation.Parameter,
+	originalParams map[string]interface{}) map[string]interface{} {
+	params := make(map[string]interface{}, len(cfParams))
+	for _, p := range cfParams {
+		_, isConfigured := originalParams[*p.ParameterKey]
+		if isConfigured {
+			params[*p.ParameterKey] = *p.ParameterValue
+		}
+	}
+	return params
+}
+
+func expandCloudFormationTags(tags map[string]interface{}) []*cloudformation.Tag {
+	var cfTags []*cloudformation.Tag
+	for k, v := range tags {
+		cfTags = append(cfTags, &cloudformation.Tag{
+			Key:   aws.String(k),
+			Value: aws.String(v.(string)),
+		})
+	}
+	return cfTags
+}
+
+func flattenCloudFormationTags(cfTags []*cloudformation.Tag) map[string]string {
+	tags := make(map[string]string, len(cfTags))
+	for _, t := range cfTags {
+		tags[*t.Key] = *t.Value
+	}
+	return tags
+}
+
+func flattenCloudFormationOutputs(cfOutputs []*cloudformation.Output) map[string]string {
+	outputs := make(map[string]string, len(cfOutputs))
+	for _, o := range cfOutputs {
+		outputs[*o.OutputKey] = *o.OutputValue
+	}
+	return outputs
 }

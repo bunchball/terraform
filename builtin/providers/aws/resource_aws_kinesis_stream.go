@@ -2,6 +2,7 @@ package aws
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -15,6 +16,7 @@ func resourceAwsKinesisStream() *schema.Resource {
 	return &schema.Resource{
 		Create: resourceAwsKinesisStreamCreate,
 		Read:   resourceAwsKinesisStreamRead,
+		Update: resourceAwsKinesisStreamUpdate,
 		Delete: resourceAwsKinesisStreamDelete,
 
 		Schema: map[string]*schema.Schema{
@@ -35,6 +37,7 @@ func resourceAwsKinesisStream() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
+			"tags": tagsSchema(),
 		},
 	}
 }
@@ -71,19 +74,33 @@ func resourceAwsKinesisStreamCreate(d *schema.ResourceData, meta interface{}) er
 			sn, err)
 	}
 
-	s := streamRaw.(*kinesis.StreamDescription)
-	d.SetId(*s.StreamARN)
-	d.Set("arn", s.StreamARN)
+	s := streamRaw.(kinesisStreamState)
+	d.SetId(s.arn)
+	d.Set("arn", s.arn)
+	d.Set("shard_count", s.shardCount)
 
-	return nil
+	return resourceAwsKinesisStreamUpdate(d, meta)
+}
+
+func resourceAwsKinesisStreamUpdate(d *schema.ResourceData, meta interface{}) error {
+	conn := meta.(*AWSClient).kinesisconn
+
+	d.Partial(true)
+	if err := setTagsKinesis(conn, d); err != nil {
+		return err
+	}
+
+	d.SetPartial("tags")
+	d.Partial(false)
+
+	return resourceAwsKinesisStreamRead(d, meta)
 }
 
 func resourceAwsKinesisStreamRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).kinesisconn
-	describeOpts := &kinesis.DescribeStreamInput{
-		StreamName: aws.String(d.Get("name").(string)),
-	}
-	resp, err := conn.DescribeStream(describeOpts)
+	sn := d.Get("name").(string)
+
+	state, err := readKinesisStreamState(conn, sn)
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			if awsErr.Code() == "ResourceNotFoundException" {
@@ -93,11 +110,21 @@ func resourceAwsKinesisStreamRead(d *schema.ResourceData, meta interface{}) erro
 			return fmt.Errorf("[WARN] Error reading Kinesis Stream: \"%s\", code: \"%s\"", awsErr.Message(), awsErr.Code())
 		}
 		return err
-	}
 
-	s := resp.StreamDescription
-	d.Set("arn", *s.StreamARN)
-	d.Set("shard_count", len(s.Shards))
+	}
+	d.Set("arn", state.arn)
+	d.Set("shard_count", state.shardCount)
+
+	// set tags
+	describeTagsOpts := &kinesis.ListTagsForStreamInput{
+		StreamName: aws.String(sn),
+	}
+	tagsResp, err := conn.ListTagsForStream(describeTagsOpts)
+	if err != nil {
+		log.Printf("[DEBUG] Error retrieving tags for Stream: %s. %s", sn, err)
+	} else {
+		d.Set("tags", tagsToMapKinesis(tagsResp.Tags))
+	}
 
 	return nil
 }
@@ -133,12 +160,30 @@ func resourceAwsKinesisStreamDelete(d *schema.ResourceData, meta interface{}) er
 	return nil
 }
 
+type kinesisStreamState struct {
+	arn        string
+	status     string
+	shardCount int
+}
+
+func readKinesisStreamState(conn *kinesis.Kinesis, sn string) (kinesisStreamState, error) {
+	describeOpts := &kinesis.DescribeStreamInput{
+		StreamName: aws.String(sn),
+	}
+
+	var state kinesisStreamState
+	err := conn.DescribeStreamPages(describeOpts, func(page *kinesis.DescribeStreamOutput, last bool) (shouldContinue bool) {
+		state.arn = aws.StringValue(page.StreamDescription.StreamARN)
+		state.status = aws.StringValue(page.StreamDescription.StreamStatus)
+		state.shardCount += len(page.StreamDescription.Shards)
+		return !last
+	})
+	return state, err
+}
+
 func streamStateRefreshFunc(conn *kinesis.Kinesis, sn string) resource.StateRefreshFunc {
 	return func() (interface{}, string, error) {
-		describeOpts := &kinesis.DescribeStreamInput{
-			StreamName: aws.String(sn),
-		}
-		resp, err := conn.DescribeStream(describeOpts)
+		state, err := readKinesisStreamState(conn, sn)
 		if err != nil {
 			if awsErr, ok := err.(awserr.Error); ok {
 				if awsErr.Code() == "ResourceNotFoundException" {
@@ -149,6 +194,6 @@ func streamStateRefreshFunc(conn *kinesis.Kinesis, sn string) resource.StateRefr
 			return nil, "failed", err
 		}
 
-		return resp.StreamDescription, *resp.StreamDescription.StreamStatus, nil
+		return state, state.status, nil
 	}
 }

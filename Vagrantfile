@@ -5,6 +5,7 @@
 VAGRANTFILE_API_VERSION = "2"
 
 $script = <<SCRIPT
+GOVERSION="1.5.1"
 SRCROOT="/opt/go"
 SRCPATH="/opt/gopath"
 
@@ -13,12 +14,13 @@ ARCH=`uname -m | sed 's|i686|386|' | sed 's|x86_64|amd64|'`
 
 # Install Prereq Packages
 sudo apt-get update
+sudo apt-get upgrade -y
 sudo apt-get install -y build-essential curl git-core libpcre3-dev mercurial pkg-config zip
 
 # Install Go
 cd /tmp
-wget -q https://storage.googleapis.com/golang/go1.4.2.linux-${ARCH}.tar.gz
-tar -xf go1.4.2.linux-${ARCH}.tar.gz
+wget --quiet https://storage.googleapis.com/golang/go${GOVERSION}.linux-${ARCH}.tar.gz
+tar -xvf go${GOVERSION}.linux-${ARCH}.tar.gz
 sudo mv go $SRCROOT
 sudo chmod 775 $SRCROOT
 sudo chown vagrant:vagrant $SRCROOT
@@ -41,7 +43,7 @@ source /etc/profile.d/gopath.sh
 SCRIPT
 
 Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
-  config.vm.box = "chef/ubuntu-12.04"
+  config.vm.box = "bento/ubuntu-12.04"
   config.vm.hostname = "terraform"
 
   config.vm.provision "shell", inline: $script, privileged: false
@@ -52,5 +54,10 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
       v.vmx["memsize"] = "4096"
       v.vmx["numvcpus"] = "2"
     end
+  end
+
+  config.vm.provider "virtualbox" do |v|
+    v.memory = 4096
+    v.cpus = 2
   end
 end

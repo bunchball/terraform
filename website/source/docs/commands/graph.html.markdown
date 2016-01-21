@@ -31,7 +31,7 @@ Options:
                       This helps when diagnosing cycle errors.
 
 * `-module-depth=n` - The maximum depth to expand modules. By default this is
-                      zero, which will not expand modules at all.
+                      -1, which will expand all modules.
 
 * `-verbose`        - Generate a verbose, "worst-case" graph, with all nodes
                       for potential operations in place.
@@ -45,9 +45,6 @@ by GraphViz:
 ```
 $ terraform graph | dot -Tpng > graph.png
 ```
-
-Alternatively, the web-based [GraphViz Workspace](http://graphviz-dev.appspot.com)
-can be used to quickly render DOT file inputs as well.
 
 Here is an example graph output:
 ![Graph Example](graph-example.png)

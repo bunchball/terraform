@@ -3,12 +3,10 @@ package azure
 import (
 	"encoding/xml"
 	"fmt"
-	"io/ioutil"
-	"os"
 
+	"github.com/hashicorp/terraform/helper/pathorcontents"
 	"github.com/hashicorp/terraform/helper/schema"
 	"github.com/hashicorp/terraform/terraform"
-	"github.com/mitchellh/go-homedir"
 )
 
 // Provider returns a terraform.ResourceProvider.
@@ -20,6 +18,14 @@ func Provider() terraform.ResourceProvider {
 				Optional:     true,
 				DefaultFunc:  schema.EnvDefaultFunc("AZURE_SETTINGS_FILE", nil),
 				ValidateFunc: validateSettingsFile,
+				Deprecated:   "Use the publish_settings field instead",
+			},
+
+			"publish_settings": &schema.Schema{
+				Type:         schema.TypeString,
+				Optional:     true,
+				DefaultFunc:  schema.EnvDefaultFunc("AZURE_PUBLISH_SETTINGS", nil),
+				ValidateFunc: validatePublishSettings,
 			},
 
 			"subscription_id": &schema.Schema{
@@ -64,22 +70,15 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 		Certificate:    []byte(d.Get("certificate").(string)),
 	}
 
-	settings := d.Get("settings_file").(string)
-
-	if settings != "" {
-		if ok, _ := isFile(settings); ok {
-			settingsFile, err := homedir.Expand(settings)
-			if err != nil {
-				return nil, fmt.Errorf("Error expanding the settings file path: %s", err)
-			}
-			publishSettingsContent, err := ioutil.ReadFile(settingsFile)
-			if err != nil {
-				return nil, fmt.Errorf("Error reading settings file: %s", err)
-			}
-			config.Settings = publishSettingsContent
-		} else {
-			config.Settings = []byte(settings)
-		}
+	publishSettings := d.Get("publish_settings").(string)
+	if publishSettings == "" {
+		publishSettings = d.Get("settings_file").(string)
+	}
+	if publishSettings != "" {
+		// any errors from readSettings would have been caught at the validate
+		// step, so we can avoid handling them now
+		settings, _, _ := readSettings(publishSettings)
+		config.Settings = settings
 		return config.NewClientFromSettingsData()
 	}
 
@@ -92,39 +91,52 @@ func providerConfigure(d *schema.ResourceData) (interface{}, error) {
 			"or both a 'subscription_id' and 'certificate'.")
 }
 
-func validateSettingsFile(v interface{}, k string) (warnings []string, errors []error) {
+func validateSettingsFile(v interface{}, k string) ([]string, []error) {
 	value := v.(string)
+	if value == "" {
+		return nil, nil
+	}
 
+	_, warnings, errors := readSettings(value)
+	return warnings, errors
+}
+
+func validatePublishSettings(v interface{}, k string) (ws []string, es []error) {
+	value := v.(string)
 	if value == "" {
 		return
 	}
 
 	var settings settingsData
 	if err := xml.Unmarshal([]byte(value), &settings); err != nil {
-		warnings = append(warnings, `
-settings_file is not valid XML, so we are assuming it is a file path. This
-support will be removed in the future. Please update your configuration to use
-${file("filename.publishsettings")} instead.`)
-	} else {
-		return
-	}
-
-	if ok, err := isFile(value); !ok {
-		errors = append(errors,
-			fmt.Errorf(
-				"account_file path could not be read from '%s': %s",
-				value,
-				err))
+		es = append(es, fmt.Errorf("error parsing publish_settings as XML: %s", err))
 	}
 
 	return
 }
 
-func isFile(v string) (bool, error) {
-	if _, err := os.Stat(v); err != nil {
-		return false, err
+const settingsPathWarnMsg = `
+settings_file was provided as a file path. This support
+will be removed in the future. Please update your configuration
+to use ${file("filename.publishsettings")} instead.`
+
+func readSettings(pathOrContents string) (s []byte, ws []string, es []error) {
+	contents, wasPath, err := pathorcontents.Read(pathOrContents)
+	if err != nil {
+		es = append(es, fmt.Errorf("error reading settings_file: %s", err))
 	}
-	return true, nil
+	if wasPath {
+		ws = append(ws, settingsPathWarnMsg)
+	}
+
+	var settings settingsData
+	if err := xml.Unmarshal([]byte(contents), &settings); err != nil {
+		es = append(es, fmt.Errorf("error parsing settings_file as XML: %s", err))
+	}
+
+	s = []byte(contents)
+
+	return
 }
 
 // settingsData is a private struct used to test the unmarshalling of the

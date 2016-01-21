@@ -80,6 +80,38 @@ The supported built-in functions are:
   * `base64encode(string)` - Returns a base64-encoded representation of the
     given string.
 
+  * `sha1(string)` - Returns a SHA-1 hash representation of the
+    given string.
+    Example: `"${sha1(concat(aws_vpc.default.tags.customer, "-s3-bucket"))}"`
+
+  * `sha256(string)` - Returns a SHA-256 hash representation of the
+    given string.
+    Example: `"${sha256(concat(aws_vpc.default.tags.customer, "-s3-bucket"))}"`
+
+  * `cidrhost(iprange, hostnum)` - Takes an IP address range in CIDR notation
+    and creates an IP address with the given host number. For example,
+    ``cidrhost("10.0.0.0/8", 2)`` returns ``10.0.0.2``.
+
+  * `cidrnetmask(iprange)` - Takes an IP address range in CIDR notation
+    and returns the address-formatted subnet mask format that some
+    systems expect for IPv4 interfaces. For example,
+    ``cidrmask("10.0.0.0/8")`` returns ``255.0.0.0``. Not applicable
+    to IPv6 networks since CIDR notation is the only valid notation for
+    IPv6.
+
+  * `cidrsubnet(iprange, newbits, netnum)` - Takes an IP address range in
+    CIDR notation (like ``10.0.0.0/8``) and extends its prefix to include an
+    additional subnet number. For example,
+    ``cidrsubnet("10.0.0.0/8", 8, 2)`` returns ``10.2.0.0/16``.
+
+  * `coalesce(string1, string2, ...)` - Returns the first non-empty value from
+    the given arguments. At least two arguments must be provided.
+
+  * `compact(list)` - Removes empty string elements from a list. This can be
+     useful in some cases, for example when passing joined lists as module
+     variables or when parsing module outputs.
+     Example: `compact(module.my_asg.load_balancer_names)`
+
   * `concat(list1, list2)` - Combines two or more lists into a single list.
      Example: `concat(aws_instance.db.*.tags.Name, aws_instance.web.*.tags.Name)`
 
@@ -96,7 +128,7 @@ The supported built-in functions are:
 
   * `format(format, args...)` - Formats a string according to the given
       format. The syntax for the format is standard `sprintf` syntax.
-      Good documentation for the syntax can be [found here](http://golang.org/pkg/fmt/).
+      Good documentation for the syntax can be [found here](https://golang.org/pkg/fmt/).
       Example to zero-prefix a count, used commonly for naming servers:
       `format("web-%03d", count.index + 1)`.
 
@@ -126,6 +158,8 @@ The supported built-in functions are:
       variable. The `map` parameter should be another variable, such
       as `var.amis`.
 
+  * `lower(string)` - Returns a copy of the string with all Unicode letters mapped to their lower case.
+
   * `replace(string, search, replace)` - Does a search and replace on the
       given string. All instances of `search` are replaced with the value
       of `replace`. If `search` is wrapped in forward slashes, it is treated
@@ -142,6 +176,8 @@ The supported built-in functions are:
       `a_resource_param = ["${split(",", var.CSV_STRING)}"]`.
       Example: `split(",", module.amod.server_ids)`
 
+  * `upper(string)` - Returns a copy of the string with all Unicode letters mapped to their upper case.
+
 ## Templates
 
 Long strings can be managed using templates. [Templates](/docs/providers/template/index.html) are [resources](/docs/configuration/resources.html) defined by a filename and some variables to use during interpolation. They have a computed `rendered` attribute containing the result.
@@ -150,28 +186,21 @@ A template resource looks like:
 
 ```
 resource "template_file" "example" {
-    filename = "template.txt"
-    vars {
-        hello = "goodnight"
-        world = "moon"
-    }
+  template = "${hello} ${world}!"
+  vars {
+    hello = "goodnight"
+    world = "moon"
+  }
 }
 
 output "rendered" {
-    value = "${template_file.example.rendered}"
+  value = "${template_file.example.rendered}"
 }
-```
-
-Assuming `template.txt` looks like this:
-
-```
-${hello} ${world}!
 ```
 
 Then the rendered value would be `goodnight moon!`.
 
 You may use any of the built-in functions in your template.
-
 
 ### Using Templates with Count
 
@@ -192,8 +221,8 @@ variable "hostnames" {
 
 resource "template_file" "web_init" {
   // here we expand multiple template_files - the same number as we have instances
-  count = "${var.count}"
-  filename = "templates/web_init.tpl"
+  count    = "${var.count}"
+  template = "${file("templates/web_init.tpl")}"
   vars {
     // that gives us access to use count.index to do the lookup
     hostname = "${lookup(var.hostnames, count.index)}"
@@ -233,8 +262,8 @@ resource "aws_instance" "web" {
 
 The supported operations are:
 
-- *Add*, *Subtract*, *Multiply*, and *Divide* for **float** types
-- *Add*, *Subtract*, *Multiply*, *Divide*, and *Modulo* for **integer** types
+- *Add* (`+`), *Subtract* (`-`), *Multiply* (`*`), and *Divide* (`/`) for **float** types
+- *Add* (`+`), *Subtract* (`-`), *Multiply* (`*`), *Divide* (`/`), and *Modulo* (`%`) for **integer** types
 
 -> **Note:** Since Terraform allows hyphens in resource and variable names,
 it's best to use spaces between math operators to prevent confusion or unexpected

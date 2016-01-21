@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
 )
@@ -89,9 +90,9 @@ func testAccCheckContainerClusterExists(n string) resource.TestCheckFunc {
 	}
 }
 
-const testAccContainerCluster_basic = `
+var testAccContainerCluster_basic = fmt.Sprintf(`
 resource "google_container_cluster" "primary" {
-	name = "terraform-foo-bar-test"
+	name = "cluster-test-%s"
 	zone = "us-central1-a"
 	initial_node_count = 3
 
@@ -99,11 +100,11 @@ resource "google_container_cluster" "primary" {
 		username = "mr.yoda"
 		password = "adoy.rm"
 	}
-}`
+}`, acctest.RandString(10))
 
-const testAccContainerCluster_withNodeConfig = `
+var testAccContainerCluster_withNodeConfig = fmt.Sprintf(`
 resource "google_container_cluster" "with_node_config" {
-	name = "terraform-foo-bar-with-nodeconfig"
+	name = "cluster-test-%s"
 	zone = "us-central1-f"
 	initial_node_count = 1
 
@@ -113,7 +114,7 @@ resource "google_container_cluster" "with_node_config" {
 	}
 
 	node_config {
-		machine_type = "f1-micro"
+		machine_type = "g1-small"
 		disk_size_gb = 15
 		oauth_scopes = [
 			"https://www.googleapis.com/auth/compute",
@@ -122,4 +123,4 @@ resource "google_container_cluster" "with_node_config" {
 			"https://www.googleapis.com/auth/monitoring"
 		]
 	}
-}`
+}`, acctest.RandString(10))

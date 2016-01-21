@@ -2,6 +2,7 @@ package aws
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -9,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/elasticache"
 	"github.com/aws/aws-sdk-go/service/elb"
 	"github.com/aws/aws-sdk-go/service/rds"
+	"github.com/aws/aws-sdk-go/service/redshift"
 	"github.com/aws/aws-sdk-go/service/route53"
 	"github.com/hashicorp/terraform/flatmap"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -37,7 +39,7 @@ func testConf() map[string]string {
 	}
 }
 
-func TestexpandIPPerms(t *testing.T) {
+func TestExpandIPPerms(t *testing.T) {
 	hash := schema.HashString
 
 	expanded := []interface{}{
@@ -287,13 +289,20 @@ func TestExpandIPPerms_nonVPC(t *testing.T) {
 	}
 }
 
-func TestexpandListeners(t *testing.T) {
+func TestExpandListeners(t *testing.T) {
 	expanded := []interface{}{
 		map[string]interface{}{
 			"instance_port":     8000,
 			"lb_port":           80,
 			"instance_protocol": "http",
 			"lb_protocol":       "http",
+		},
+		map[string]interface{}{
+			"instance_port":      8000,
+			"lb_port":            80,
+			"instance_protocol":  "https",
+			"lb_protocol":        "https",
+			"ssl_certificate_id": "something",
 		},
 	}
 	listeners, err := expandListeners(expanded)
@@ -314,10 +323,34 @@ func TestexpandListeners(t *testing.T) {
 			listeners[0],
 			expected)
 	}
-
 }
 
-func TestflattenHealthCheck(t *testing.T) {
+// this test should produce an error from expandlisteners on an invalid
+// combination
+func TestExpandListeners_invalid(t *testing.T) {
+	expanded := []interface{}{
+		map[string]interface{}{
+			"instance_port":      8000,
+			"lb_port":            80,
+			"instance_protocol":  "http",
+			"lb_protocol":        "http",
+			"ssl_certificate_id": "something",
+		},
+	}
+	_, err := expandListeners(expanded)
+	if err != nil {
+		// Check the error we got
+		if !strings.Contains(err.Error(), "ssl_certificate_id may be set only when protocol") {
+			t.Fatalf("Got error in TestExpandListeners_invalid, but not what we expected: %s", err)
+		}
+	}
+
+	if err == nil {
+		t.Fatalf("Expected TestExpandListeners_invalid to fail, but passed")
+	}
+}
+
+func TestFlattenHealthCheck(t *testing.T) {
 	cases := []struct {
 		Input  *elb.HealthCheck
 		Output []map[string]interface{}
@@ -367,7 +400,7 @@ func TestExpandStringList(t *testing.T) {
 
 }
 
-func TestexpandParameters(t *testing.T) {
+func TestExpandParameters(t *testing.T) {
 	expanded := []interface{}{
 		map[string]interface{}{
 			"name":         "character_set_client",
@@ -394,11 +427,36 @@ func TestexpandParameters(t *testing.T) {
 	}
 }
 
+func TestexpandRedshiftParameters(t *testing.T) {
+	expanded := []interface{}{
+		map[string]interface{}{
+			"name":  "character_set_client",
+			"value": "utf8",
+		},
+	}
+	parameters, err := expandRedshiftParameters(expanded)
+	if err != nil {
+		t.Fatalf("bad: %#v", err)
+	}
+
+	expected := &redshift.Parameter{
+		ParameterName:  aws.String("character_set_client"),
+		ParameterValue: aws.String("utf8"),
+	}
+
+	if !reflect.DeepEqual(parameters[0], expected) {
+		t.Fatalf(
+			"Got:\n\n%#v\n\nExpected:\n\n%#v\n",
+			parameters[0],
+			expected)
+	}
+}
+
 func TestexpandElasticacheParameters(t *testing.T) {
 	expanded := []interface{}{
 		map[string]interface{}{
-			"name":         "character_set_client",
-			"value":        "utf8",
+			"name":         "activerehashing",
+			"value":        "yes",
 			"apply_method": "immediate",
 		},
 	}
@@ -407,7 +465,7 @@ func TestexpandElasticacheParameters(t *testing.T) {
 		t.Fatalf("bad: %#v", err)
 	}
 
-	expected := &elasticache.Parameter{
+	expected := &elasticache.ParameterNameValue{
 		ParameterName:  aws.String("activerehashing"),
 		ParameterValue: aws.String("yes"),
 	}
@@ -420,7 +478,7 @@ func TestexpandElasticacheParameters(t *testing.T) {
 	}
 }
 
-func TestflattenParameters(t *testing.T) {
+func TestFlattenParameters(t *testing.T) {
 	cases := []struct {
 		Input  []*rds.Parameter
 		Output []map[string]interface{}
@@ -443,6 +501,35 @@ func TestflattenParameters(t *testing.T) {
 
 	for _, tc := range cases {
 		output := flattenParameters(tc.Input)
+		if !reflect.DeepEqual(output, tc.Output) {
+			t.Fatalf("Got:\n\n%#v\n\nExpected:\n\n%#v", output, tc.Output)
+		}
+	}
+}
+
+func TestflattenRedshiftParameters(t *testing.T) {
+	cases := []struct {
+		Input  []*redshift.Parameter
+		Output []map[string]interface{}
+	}{
+		{
+			Input: []*redshift.Parameter{
+				&redshift.Parameter{
+					ParameterName:  aws.String("character_set_client"),
+					ParameterValue: aws.String("utf8"),
+				},
+			},
+			Output: []map[string]interface{}{
+				map[string]interface{}{
+					"name":  "character_set_client",
+					"value": "utf8",
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		output := flattenRedshiftParameters(tc.Input)
 		if !reflect.DeepEqual(output, tc.Output) {
 			t.Fatalf("Got:\n\n%#v\n\nExpected:\n\n%#v", output, tc.Output)
 		}
@@ -478,7 +565,7 @@ func TestflattenElasticacheParameters(t *testing.T) {
 	}
 }
 
-func TestexpandInstanceString(t *testing.T) {
+func TestExpandInstanceString(t *testing.T) {
 
 	expected := []*elb.Instance{
 		&elb.Instance{InstanceId: aws.String("test-one")},
@@ -497,7 +584,7 @@ func TestexpandInstanceString(t *testing.T) {
 	}
 }
 
-func TestflattenNetworkInterfacesPrivateIPAddresses(t *testing.T) {
+func TestFlattenNetworkInterfacesPrivateIPAddresses(t *testing.T) {
 	expanded := []*ec2.NetworkInterfacePrivateIpAddress{
 		&ec2.NetworkInterfacePrivateIpAddress{PrivateIpAddress: aws.String("192.168.0.1")},
 		&ec2.NetworkInterfacePrivateIpAddress{PrivateIpAddress: aws.String("192.168.0.2")},
@@ -522,7 +609,7 @@ func TestflattenNetworkInterfacesPrivateIPAddresses(t *testing.T) {
 	}
 }
 
-func TestflattenGroupIdentifiers(t *testing.T) {
+func TestFlattenGroupIdentifiers(t *testing.T) {
 	expanded := []*ec2.GroupIdentifier{
 		&ec2.GroupIdentifier{GroupId: aws.String("sg-001")},
 		&ec2.GroupIdentifier{GroupId: aws.String("sg-002")},
@@ -543,7 +630,7 @@ func TestflattenGroupIdentifiers(t *testing.T) {
 	}
 }
 
-func TestexpandPrivateIPAddresses(t *testing.T) {
+func TestExpandPrivateIPAddresses(t *testing.T) {
 
 	ip1 := "192.168.0.1"
 	ip2 := "192.168.0.2"
@@ -567,7 +654,7 @@ func TestexpandPrivateIPAddresses(t *testing.T) {
 	}
 }
 
-func TestflattenAttachment(t *testing.T) {
+func TestFlattenAttachment(t *testing.T) {
 	expanded := &ec2.NetworkInterfaceAttachment{
 		InstanceId:   aws.String("i-00001"),
 		DeviceIndex:  aws.Int64(int64(1)),

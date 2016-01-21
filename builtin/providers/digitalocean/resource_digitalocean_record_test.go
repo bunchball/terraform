@@ -2,15 +2,18 @@ package digitalocean
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
+	"github.com/digitalocean/godo"
+	"github.com/hashicorp/terraform/helper/acctest"
 	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/terraform"
-	"github.com/pearkes/digitalocean"
 )
 
 func TestAccDigitalOceanRecord_Basic(t *testing.T) {
-	var record digitalocean.Record
+	var record godo.DomainRecord
+	domain := fmt.Sprintf("foobar-test-terraform-%s.com", acctest.RandString(10))
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -18,14 +21,14 @@ func TestAccDigitalOceanRecord_Basic(t *testing.T) {
 		CheckDestroy: testAccCheckDigitalOceanRecordDestroy,
 		Steps: []resource.TestStep{
 			resource.TestStep{
-				Config: testAccCheckDigitalOceanRecordConfig_basic,
+				Config: fmt.Sprintf(testAccCheckDigitalOceanRecordConfig_basic, domain),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckDigitalOceanRecordExists("digitalocean_record.foobar", &record),
 					testAccCheckDigitalOceanRecordAttributes(&record),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "name", "terraform"),
 					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "domain", "foobar-test-terraform.com"),
+						"digitalocean_record.foobar", "domain", domain),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "value", "192.168.0.10"),
 				),
@@ -35,7 +38,8 @@ func TestAccDigitalOceanRecord_Basic(t *testing.T) {
 }
 
 func TestAccDigitalOceanRecord_Updated(t *testing.T) {
-	var record digitalocean.Record
+	var record godo.DomainRecord
+	domain := fmt.Sprintf("foobar-test-terraform-%s.com", acctest.RandString(10))
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -43,14 +47,14 @@ func TestAccDigitalOceanRecord_Updated(t *testing.T) {
 		CheckDestroy: testAccCheckDigitalOceanRecordDestroy,
 		Steps: []resource.TestStep{
 			resource.TestStep{
-				Config: testAccCheckDigitalOceanRecordConfig_basic,
+				Config: fmt.Sprintf(testAccCheckDigitalOceanRecordConfig_basic, domain),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckDigitalOceanRecordExists("digitalocean_record.foobar", &record),
 					testAccCheckDigitalOceanRecordAttributes(&record),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "name", "terraform"),
 					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "domain", "foobar-test-terraform.com"),
+						"digitalocean_record.foobar", "domain", domain),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "value", "192.168.0.10"),
 					resource.TestCheckResourceAttr(
@@ -58,14 +62,15 @@ func TestAccDigitalOceanRecord_Updated(t *testing.T) {
 				),
 			},
 			resource.TestStep{
-				Config: testAccCheckDigitalOceanRecordConfig_new_value,
+				Config: fmt.Sprintf(
+					testAccCheckDigitalOceanRecordConfig_new_value, domain),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckDigitalOceanRecordExists("digitalocean_record.foobar", &record),
 					testAccCheckDigitalOceanRecordAttributesUpdated(&record),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "name", "terraform"),
 					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "domain", "foobar-test-terraform.com"),
+						"digitalocean_record.foobar", "domain", domain),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "value", "192.168.0.11"),
 					resource.TestCheckResourceAttr(
@@ -77,7 +82,8 @@ func TestAccDigitalOceanRecord_Updated(t *testing.T) {
 }
 
 func TestAccDigitalOceanRecord_HostnameValue(t *testing.T) {
-	var record digitalocean.Record
+	var record godo.DomainRecord
+	domain := fmt.Sprintf("foobar-test-terraform-%s.com", acctest.RandString(10))
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -85,14 +91,15 @@ func TestAccDigitalOceanRecord_HostnameValue(t *testing.T) {
 		CheckDestroy: testAccCheckDigitalOceanRecordDestroy,
 		Steps: []resource.TestStep{
 			resource.TestStep{
-				Config: testAccCheckDigitalOceanRecordConfig_cname,
+				Config: fmt.Sprintf(
+					testAccCheckDigitalOceanRecordConfig_cname, domain),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckDigitalOceanRecordExists("digitalocean_record.foobar", &record),
-					testAccCheckDigitalOceanRecordAttributesHostname("a", &record),
+					testAccCheckDigitalOceanRecordAttributesHostname("a.foobar-test-terraform.com", &record),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "name", "terraform"),
 					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "domain", "foobar-test-terraform.com"),
+						"digitalocean_record.foobar", "domain", domain),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "value", "a.foobar-test-terraform.com."),
 					resource.TestCheckResourceAttr(
@@ -103,35 +110,9 @@ func TestAccDigitalOceanRecord_HostnameValue(t *testing.T) {
 	})
 }
 
-func TestAccDigitalOceanRecord_RelativeHostnameValue(t *testing.T) {
-	var record digitalocean.Record
-
-	resource.Test(t, resource.TestCase{
-		PreCheck:     func() { testAccPreCheck(t) },
-		Providers:    testAccProviders,
-		CheckDestroy: testAccCheckDigitalOceanRecordDestroy,
-		Steps: []resource.TestStep{
-			resource.TestStep{
-				Config: testAccCheckDigitalOceanRecordConfig_relative_cname,
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckDigitalOceanRecordExists("digitalocean_record.foobar", &record),
-					testAccCheckDigitalOceanRecordAttributesHostname("a.b", &record),
-					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "name", "terraform"),
-					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "domain", "foobar-test-terraform.com"),
-					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "value", "a.b"),
-					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "type", "CNAME"),
-				),
-			},
-		},
-	})
-}
-
 func TestAccDigitalOceanRecord_ExternalHostnameValue(t *testing.T) {
-	var record digitalocean.Record
+	var record godo.DomainRecord
+	domain := fmt.Sprintf("foobar-test-terraform-%s.com", acctest.RandString(10))
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -139,14 +120,15 @@ func TestAccDigitalOceanRecord_ExternalHostnameValue(t *testing.T) {
 		CheckDestroy: testAccCheckDigitalOceanRecordDestroy,
 		Steps: []resource.TestStep{
 			resource.TestStep{
-				Config: testAccCheckDigitalOceanRecordConfig_external_cname,
+				Config: fmt.Sprintf(
+					testAccCheckDigitalOceanRecordConfig_external_cname, domain),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckDigitalOceanRecordExists("digitalocean_record.foobar", &record),
 					testAccCheckDigitalOceanRecordAttributesHostname("a.foobar-test-terraform.net", &record),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "name", "terraform"),
 					resource.TestCheckResourceAttr(
-						"digitalocean_record.foobar", "domain", "foobar-test-terraform.com"),
+						"digitalocean_record.foobar", "domain", domain),
 					resource.TestCheckResourceAttr(
 						"digitalocean_record.foobar", "value", "a.foobar-test-terraform.net."),
 					resource.TestCheckResourceAttr(
@@ -158,14 +140,19 @@ func TestAccDigitalOceanRecord_ExternalHostnameValue(t *testing.T) {
 }
 
 func testAccCheckDigitalOceanRecordDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*digitalocean.Client)
+	client := testAccProvider.Meta().(*godo.Client)
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != "digitalocean_record" {
 			continue
 		}
+		domain := rs.Primary.Attributes["domain"]
+		id, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil {
+			return err
+		}
 
-		_, err := client.RetrieveRecord(rs.Primary.Attributes["domain"], rs.Primary.ID)
+		_, _, err = client.Domains.Record(domain, id)
 
 		if err == nil {
 			return fmt.Errorf("Record still exists")
@@ -175,7 +162,7 @@ func testAccCheckDigitalOceanRecordDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testAccCheckDigitalOceanRecordAttributes(record *digitalocean.Record) resource.TestCheckFunc {
+func testAccCheckDigitalOceanRecordAttributes(record *godo.DomainRecord) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 
 		if record.Data != "192.168.0.10" {
@@ -186,7 +173,7 @@ func testAccCheckDigitalOceanRecordAttributes(record *digitalocean.Record) resou
 	}
 }
 
-func testAccCheckDigitalOceanRecordAttributesUpdated(record *digitalocean.Record) resource.TestCheckFunc {
+func testAccCheckDigitalOceanRecordAttributesUpdated(record *godo.DomainRecord) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 
 		if record.Data != "192.168.0.11" {
@@ -197,7 +184,7 @@ func testAccCheckDigitalOceanRecordAttributesUpdated(record *digitalocean.Record
 	}
 }
 
-func testAccCheckDigitalOceanRecordExists(n string, record *digitalocean.Record) resource.TestCheckFunc {
+func testAccCheckDigitalOceanRecordExists(n string, record *godo.DomainRecord) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[n]
 
@@ -209,25 +196,31 @@ func testAccCheckDigitalOceanRecordExists(n string, record *digitalocean.Record)
 			return fmt.Errorf("No Record ID is set")
 		}
 
-		client := testAccProvider.Meta().(*digitalocean.Client)
+		client := testAccProvider.Meta().(*godo.Client)
 
-		foundRecord, err := client.RetrieveRecord(rs.Primary.Attributes["domain"], rs.Primary.ID)
+		domain := rs.Primary.Attributes["domain"]
+		id, err := strconv.Atoi(rs.Primary.ID)
+		if err != nil {
+			return err
+		}
+
+		foundRecord, _, err := client.Domains.Record(domain, id)
 
 		if err != nil {
 			return err
 		}
 
-		if foundRecord.StringId() != rs.Primary.ID {
+		if strconv.Itoa(foundRecord.ID) != rs.Primary.ID {
 			return fmt.Errorf("Record not found")
 		}
 
-		*record = foundRecord
+		*record = *foundRecord
 
 		return nil
 	}
 }
 
-func testAccCheckDigitalOceanRecordAttributesHostname(data string, record *digitalocean.Record) resource.TestCheckFunc {
+func testAccCheckDigitalOceanRecordAttributesHostname(data string, record *godo.DomainRecord) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 
 		if record.Data != data {
@@ -240,70 +233,56 @@ func testAccCheckDigitalOceanRecordAttributesHostname(data string, record *digit
 
 const testAccCheckDigitalOceanRecordConfig_basic = `
 resource "digitalocean_domain" "foobar" {
-    name = "foobar-test-terraform.com"
-    ip_address = "192.168.0.10"
+  name       = "%s"
+  ip_address = "192.168.0.10"
 }
 
 resource "digitalocean_record" "foobar" {
-    domain = "${digitalocean_domain.foobar.name}"
+  domain = "${digitalocean_domain.foobar.name}"
 
-    name = "terraform"
-    value = "192.168.0.10"
-    type = "A"
+  name  = "terraform"
+  value = "192.168.0.10"
+  type  = "A"
 }`
 
 const testAccCheckDigitalOceanRecordConfig_new_value = `
 resource "digitalocean_domain" "foobar" {
-    name = "foobar-test-terraform.com"
-    ip_address = "192.168.0.10"
+  name       = "%s"
+  ip_address = "192.168.0.10"
 }
 
 resource "digitalocean_record" "foobar" {
-    domain = "${digitalocean_domain.foobar.name}"
+  domain = "${digitalocean_domain.foobar.name}"
 
-    name = "terraform"
-    value = "192.168.0.11"
-    type = "A"
+  name  = "terraform"
+  value = "192.168.0.11"
+  type  = "A"
 }`
 
 const testAccCheckDigitalOceanRecordConfig_cname = `
 resource "digitalocean_domain" "foobar" {
-    name = "foobar-test-terraform.com"
-    ip_address = "192.168.0.10"
+  name       = "%s"
+  ip_address = "192.168.0.10"
 }
 
 resource "digitalocean_record" "foobar" {
-    domain = "${digitalocean_domain.foobar.name}"
+  domain = "${digitalocean_domain.foobar.name}"
 
-    name = "terraform"
-    value = "a.foobar-test-terraform.com."
-    type = "CNAME"
-}`
-
-const testAccCheckDigitalOceanRecordConfig_relative_cname = `
-resource "digitalocean_domain" "foobar" {
-    name = "foobar-test-terraform.com"
-    ip_address = "192.168.0.10"
-}
-
-resource "digitalocean_record" "foobar" {
-    domain = "${digitalocean_domain.foobar.name}"
-
-    name = "terraform"
-    value = "a.b"
-    type = "CNAME"
+  name  = "terraform"
+  value = "a.foobar-test-terraform.com."
+  type  = "CNAME"
 }`
 
 const testAccCheckDigitalOceanRecordConfig_external_cname = `
 resource "digitalocean_domain" "foobar" {
-    name = "foobar-test-terraform.com"
-    ip_address = "192.168.0.10"
+  name       = "%s"
+  ip_address = "192.168.0.10"
 }
 
 resource "digitalocean_record" "foobar" {
-    domain = "${digitalocean_domain.foobar.name}"
+  domain = "${digitalocean_domain.foobar.name}"
 
-    name = "terraform"
-    value = "a.foobar-test-terraform.net."
-    type = "CNAME"
+  name  = "terraform"
+  value = "a.foobar-test-terraform.net."
+  type  = "CNAME"
 }`

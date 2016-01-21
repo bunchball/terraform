@@ -104,6 +104,29 @@ func TestContext2Plan_emptyDiff(t *testing.T) {
 	}
 }
 
+func TestContext2Plan_escapedVar(t *testing.T) {
+	m := testModule(t, "plan-escaped-var")
+	p := testProvider("aws")
+	p.DiffFn = testDiffFn
+	ctx := testContext2(t, &ContextOpts{
+		Module: m,
+		Providers: map[string]ResourceProviderFactory{
+			"aws": testProviderFuncFixed(p),
+		},
+	})
+
+	plan, err := ctx.Plan()
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	actual := strings.TrimSpace(plan.String())
+	expected := strings.TrimSpace(testTerraformPlanEscapedVarStr)
+	if actual != expected {
+		t.Fatalf("bad:\n%s", actual)
+	}
+}
+
 func TestContext2Plan_minimal(t *testing.T) {
 	m := testModule(t, "plan-empty")
 	p := testProvider("aws")
@@ -1627,6 +1650,53 @@ STATE:
 	}
 }
 
+func TestContext2Plan_targetedOrphan(t *testing.T) {
+	m := testModule(t, "plan-targeted-orphan")
+	p := testProvider("aws")
+	p.DiffFn = testDiffFn
+	ctx := testContext2(t, &ContextOpts{
+		Module: m,
+		Providers: map[string]ResourceProviderFactory{
+			"aws": testProviderFuncFixed(p),
+		},
+		State: &State{
+			Modules: []*ModuleState{
+				&ModuleState{
+					Path: rootModulePath,
+					Resources: map[string]*ResourceState{
+						"aws_instance.orphan": &ResourceState{
+							Type: "aws_instance",
+							Primary: &InstanceState{
+								ID: "i-789xyz",
+							},
+						},
+					},
+				},
+			},
+		},
+		Destroy: true,
+		Targets: []string{"aws_instance.orphan"},
+	})
+
+	plan, err := ctx.Plan()
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	actual := strings.TrimSpace(plan.String())
+	expected := strings.TrimSpace(`DIFF:
+
+DESTROY: aws_instance.orphan
+
+STATE:
+
+aws_instance.orphan:
+  ID = i-789xyz`)
+	if actual != expected {
+		t.Fatalf("expected:\n%s\n\ngot:\n%s", expected, actual)
+	}
+}
+
 func TestContext2Plan_provider(t *testing.T) {
 	m := testModule(t, "plan-provider")
 	p := testProvider("aws")
@@ -1670,5 +1740,51 @@ func TestContext2Plan_varListErr(t *testing.T) {
 	_, err := ctx.Plan()
 	if err == nil {
 		t.Fatal("should error")
+	}
+}
+
+func TestContext2Plan_ignoreChanges(t *testing.T) {
+	m := testModule(t, "plan-ignore-changes")
+	p := testProvider("aws")
+	p.DiffFn = testDiffFn
+	s := &State{
+		Modules: []*ModuleState{
+			&ModuleState{
+				Path: rootModulePath,
+				Resources: map[string]*ResourceState{
+					"aws_instance.foo": &ResourceState{
+						Primary: &InstanceState{
+							ID:         "bar",
+							Attributes: map[string]string{"ami": "ami-abcd1234"},
+						},
+					},
+				},
+			},
+		},
+	}
+	ctx := testContext2(t, &ContextOpts{
+		Module: m,
+		Providers: map[string]ResourceProviderFactory{
+			"aws": testProviderFuncFixed(p),
+		},
+		Variables: map[string]string{
+			"foo": "ami-1234abcd",
+		},
+		State: s,
+	})
+
+	plan, err := ctx.Plan()
+	if err != nil {
+		t.Fatalf("err: %s", err)
+	}
+
+	if len(plan.Diff.RootModule().Resources) < 1 {
+		t.Fatalf("bad: %#v", plan.Diff.RootModule().Resources)
+	}
+
+	actual := strings.TrimSpace(plan.String())
+	expected := strings.TrimSpace(testTerraformPlanIgnoreChangesStr)
+	if actual != expected {
+		t.Fatalf("bad:\n%s\n\nexpected\n\n%s", actual, expected)
 	}
 }

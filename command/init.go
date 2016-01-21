@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/hashicorp/go-getter"
 	"github.com/hashicorp/terraform/config"
 	"github.com/hashicorp/terraform/config/module"
 	"github.com/hashicorp/terraform/terraform"
@@ -51,6 +53,11 @@ func (c *InitCommand) Run(args []string) int {
 		}
 	}
 
+	// Set the state out path to be the path requested for the module
+	// to be copied. This ensures any remote states gets setup in the
+	// proper directory.
+	c.Meta.dataDir = filepath.Join(path, DefaultDataDirectory)
+
 	source := args[0]
 
 	// Get our pwd since we need it
@@ -75,7 +82,7 @@ func (c *InitCommand) Run(args []string) int {
 	}
 
 	// Detect
-	source, err = module.Detect(source, pwd)
+	source, err = getter.Detect(source, pwd, getter.Detectors)
 	if err != nil {
 		c.Ui.Error(fmt.Sprintf(
 			"Error with module source: %s", err))

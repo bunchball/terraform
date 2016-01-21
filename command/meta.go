@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/hashicorp/go-getter"
 	"github.com/hashicorp/terraform/config/module"
 	"github.com/hashicorp/terraform/state"
 	"github.com/hashicorp/terraform/terraform"
@@ -330,9 +331,9 @@ func (m *Meta) flagSet(n string) *flag.FlagSet {
 
 // moduleStorage returns the module.Storage implementation used to store
 // modules for commands.
-func (m *Meta) moduleStorage(root string) module.Storage {
+func (m *Meta) moduleStorage(root string) getter.Storage {
 	return &uiModuleStorage{
-		Storage: &module.FolderStorage{
+		Storage: &getter.FolderStorage{
 			StorageDir: filepath.Join(root, "modules"),
 		},
 		Ui: m.Ui,
@@ -406,12 +407,17 @@ func (m *Meta) uiHook() *UiHook {
 }
 
 const (
-	// The name of the environment variable that can be used to set module depth.
+	// ModuleDepthDefault is the default value for
+	// module depth, which can be overridden by flag
+	// or env var
+	ModuleDepthDefault = -1
+
+	// ModuleDepthEnvVar is the name of the environment variable that can be used to set module depth.
 	ModuleDepthEnvVar = "TF_MODULE_DEPTH"
 )
 
 func (m *Meta) addModuleDepthFlag(flags *flag.FlagSet, moduleDepth *int) {
-	flags.IntVar(moduleDepth, "module-depth", 0, "module-depth")
+	flags.IntVar(moduleDepth, "module-depth", ModuleDepthDefault, "module-depth")
 	if envVar := os.Getenv(ModuleDepthEnvVar); envVar != "" {
 		if md, err := strconv.Atoi(envVar); err == nil {
 			*moduleDepth = md

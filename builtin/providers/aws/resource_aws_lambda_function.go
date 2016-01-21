@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -13,6 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go/service/lambda"
 	"github.com/mitchellh/go-homedir"
 
+	"errors"
+
+	"github.com/hashicorp/terraform/helper/resource"
 	"github.com/hashicorp/terraform/helper/schema"
 )
 
@@ -25,13 +27,28 @@ func resourceAwsLambdaFunction() *schema.Resource {
 
 		Schema: map[string]*schema.Schema{
 			"filename": &schema.Schema{
-				Type:     schema.TypeString,
-				Required: true,
+				Type:          schema.TypeString,
+				Optional:      true,
+				ConflictsWith: []string{"s3_bucket", "s3_key", "s3_object_version"},
+			},
+			"s3_bucket": &schema.Schema{
+				Type:          schema.TypeString,
+				Optional:      true,
+				ConflictsWith: []string{"filename"},
+			},
+			"s3_key": &schema.Schema{
+				Type:          schema.TypeString,
+				Optional:      true,
+				ConflictsWith: []string{"filename"},
+			},
+			"s3_object_version": &schema.Schema{
+				Type:          schema.TypeString,
+				Optional:      true,
+				ConflictsWith: []string{"filename"},
 			},
 			"description": &schema.Schema{
 				Type:     schema.TypeString,
 				Optional: true,
-				ForceNew: true, // TODO make this editable
 			},
 			"function_name": &schema.Schema{
 				Type:     schema.TypeString,
@@ -93,22 +110,36 @@ func resourceAwsLambdaFunctionCreate(d *schema.ResourceData, meta interface{}) e
 
 	log.Printf("[DEBUG] Creating Lambda Function %s with role %s", functionName, iamRole)
 
-	filename, err := homedir.Expand(d.Get("filename").(string))
-	if err != nil {
-		return err
+	var functionCode *lambda.FunctionCode
+	if v, ok := d.GetOk("filename"); ok {
+		filename, err := homedir.Expand(v.(string))
+		if err != nil {
+			return err
+		}
+		zipfile, err := ioutil.ReadFile(filename)
+		if err != nil {
+			return err
+		}
+		d.Set("source_code_hash", sha256.Sum256(zipfile))
+		functionCode = &lambda.FunctionCode{
+			ZipFile: zipfile,
+		}
+	} else {
+		s3Bucket, bucketOk := d.GetOk("s3_bucket")
+		s3Key, keyOk := d.GetOk("s3_key")
+		s3ObjectVersion, versionOk := d.GetOk("s3_object_version")
+		if !bucketOk || !keyOk || !versionOk {
+			return errors.New("s3_bucket, s3_key and s3_object_version must all be set while using S3 code source")
+		}
+		functionCode = &lambda.FunctionCode{
+			S3Bucket:        aws.String(s3Bucket.(string)),
+			S3Key:           aws.String(s3Key.(string)),
+			S3ObjectVersion: aws.String(s3ObjectVersion.(string)),
+		}
 	}
-	zipfile, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return err
-	}
-	d.Set("source_code_hash", sha256.Sum256(zipfile))
-
-	log.Printf("[DEBUG] ")
 
 	params := &lambda.CreateFunctionInput{
-		Code: &lambda.FunctionCode{
-			ZipFile: zipfile,
-		},
+		Code:         functionCode,
 		Description:  aws.String(d.Get("description").(string)),
 		FunctionName: aws.String(functionName),
 		Handler:      aws.String(d.Get("handler").(string)),
@@ -118,21 +149,24 @@ func resourceAwsLambdaFunctionCreate(d *schema.ResourceData, meta interface{}) e
 		Timeout:      aws.Int64(int64(d.Get("timeout").(int))),
 	}
 
-	for i := 0; i < 5; i++ {
-		_, err = conn.CreateFunction(params)
-		if awsErr, ok := err.(awserr.Error); ok {
-
-			// IAM profiles can take ~10 seconds to propagate in AWS:
-			//  http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html#launch-instance-with-role-console
-			// Error creating Lambda function: InvalidParameterValueException: The role defined for the task cannot be assumed by Lambda.
-			if awsErr.Code() == "InvalidParameterValueException" && strings.Contains(awsErr.Message(), "The role defined for the task cannot be assumed by Lambda.") {
-				log.Printf("[DEBUG] Invalid IAM Instance Profile referenced, retrying...")
-				time.Sleep(2 * time.Second)
-				continue
+	// IAM profiles can take ~10 seconds to propagate in AWS:
+	//  http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html#launch-instance-with-role-console
+	// Error creating Lambda function: InvalidParameterValueException: The role defined for the task cannot be assumed by Lambda.
+	err := resource.Retry(1*time.Minute, func() error {
+		_, err := conn.CreateFunction(params)
+		if err != nil {
+			if awserr, ok := err.(awserr.Error); ok {
+				if awserr.Code() == "InvalidParameterValueException" {
+					// Retryable
+					return awserr
+				}
 			}
+			// Not retryable
+			return resource.RetryError{Err: err}
 		}
-		break
-	}
+		// No error
+		return nil
+	})
 	if err != nil {
 		return fmt.Errorf("Error creating Lambda function: %s", err)
 	}

@@ -1,5 +1,6 @@
 *.dll
 *.exe
+.DS_Store
 example.tf
 terraform.tfplan
 terraform.tfstate
@@ -8,6 +9,7 @@ modules-dev/
 pkg/
 vendor/
 website/.vagrant
+website/.bundle
 website/build
 website/node_modules
 .vagrant/
@@ -18,3 +20,5 @@ website/node_modules
 *.bak
 *~
 .*.swp
+.idea
+*.test

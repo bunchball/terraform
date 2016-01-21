@@ -51,27 +51,32 @@ func resourceAwsEcsService() *schema.Resource {
 
 			"iam_role": &schema.Schema{
 				Type:     schema.TypeString,
+				ForceNew: true,
 				Optional: true,
 			},
 
 			"load_balancer": &schema.Schema{
 				Type:     schema.TypeSet,
 				Optional: true,
+				ForceNew: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"elb_name": &schema.Schema{
 							Type:     schema.TypeString,
 							Required: true,
+							ForceNew: true,
 						},
 
 						"container_name": &schema.Schema{
 							Type:     schema.TypeString,
 							Required: true,
+							ForceNew: true,
 						},
 
 						"container_port": &schema.Schema{
 							Type:     schema.TypeInt,
 							Required: true,
+							ForceNew: true,
 						},
 					},
 				},
@@ -137,7 +142,6 @@ func resourceAwsEcsServiceCreate(d *schema.ResourceData, meta interface{}) error
 
 	log.Printf("[DEBUG] ECS service created: %s", *service.ServiceArn)
 	d.SetId(*service.ServiceArn)
-	d.Set("cluster", *service.ClusterArn)
 
 	return resourceAwsEcsServiceUpdate(d, meta)
 }
@@ -157,10 +161,20 @@ func resourceAwsEcsServiceRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	if len(out.Services) < 1 {
+		log.Printf("[DEBUG] Removing ECS service %s (%s) because it's gone", d.Get("name").(string), d.Id())
+		d.SetId("")
 		return nil
 	}
 
 	service := out.Services[0]
+
+	// Status==INACTIVE means deleted service
+	if *service.Status == "INACTIVE" {
+		log.Printf("[DEBUG] Removing ECS service %q because it's INACTIVE", *service.ServiceArn)
+		d.SetId("")
+		return nil
+	}
+
 	log.Printf("[DEBUG] Received ECS service %s", service)
 
 	d.SetId(*service.ServiceArn)
@@ -175,14 +189,21 @@ func resourceAwsEcsServiceRead(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	d.Set("desired_count", *service.DesiredCount)
-	d.Set("cluster", *service.ClusterArn)
+
+	// Save cluster in the same format
+	if strings.HasPrefix(d.Get("cluster").(string), "arn:aws:ecs:") {
+		d.Set("cluster", *service.ClusterArn)
+	} else {
+		clusterARN := getNameFromARN(*service.ClusterArn)
+		d.Set("cluster", clusterARN)
+	}
 
 	// Save IAM role in the same format
 	if service.RoleArn != nil {
 		if strings.HasPrefix(d.Get("iam_role").(string), "arn:aws:iam:") {
 			d.Set("iam_role", *service.RoleArn)
 		} else {
-			roleARN := buildIamRoleNameFromARN(*service.RoleArn)
+			roleARN := getNameFromARN(*service.RoleArn)
 			d.Set("iam_role", roleARN)
 		}
 	}
@@ -233,6 +254,12 @@ func resourceAwsEcsServiceDelete(d *schema.ResourceData, meta interface{}) error
 	if err != nil {
 		return err
 	}
+
+	if len(resp.Services) == 0 {
+		log.Printf("[DEBUG] ECS Service %q is already gone", d.Id())
+		return nil
+	}
+
 	log.Printf("[DEBUG] ECS service %s is currently %s", d.Id(), *resp.Services[0].Status)
 
 	if *resp.Services[0].Status == "INACTIVE" {
@@ -252,13 +279,33 @@ func resourceAwsEcsServiceDelete(d *schema.ResourceData, meta interface{}) error
 		}
 	}
 
-	input := ecs.DeleteServiceInput{
-		Service: aws.String(d.Id()),
-		Cluster: aws.String(d.Get("cluster").(string)),
-	}
+	// Wait until the ECS service is drained
+	err = resource.Retry(5*time.Minute, func() error {
+		input := ecs.DeleteServiceInput{
+			Service: aws.String(d.Id()),
+			Cluster: aws.String(d.Get("cluster").(string)),
+		}
 
-	log.Printf("[DEBUG] Deleting ECS service %s", input)
-	out, err := conn.DeleteService(&input)
+		log.Printf("[DEBUG] Trying to delete ECS service %s", input)
+		_, err := conn.DeleteService(&input)
+		if err == nil {
+			return nil
+		}
+
+		ec2err, ok := err.(awserr.Error)
+		if !ok {
+			return &resource.RetryError{Err: err}
+		}
+		if ec2err.Code() == "InvalidParameterException" {
+			// Prevent "The service cannot be stopped while deployments are active."
+			log.Printf("[DEBUG] Trying to delete ECS service again: %q",
+				ec2err.Message())
+			return err
+		}
+
+		return &resource.RetryError{Err: err}
+
+	})
 	if err != nil {
 		return err
 	}
@@ -279,6 +326,7 @@ func resourceAwsEcsServiceDelete(d *schema.ResourceData, meta interface{}) error
 				return resp, "FAILED", err
 			}
 
+			log.Printf("[DEBUG] ECS service (%s) is currently %q", d.Id(), *resp.Services[0].Status)
 			return resp, *resp.Services[0].Status, nil
 		},
 	}
@@ -288,7 +336,7 @@ func resourceAwsEcsServiceDelete(d *schema.ResourceData, meta interface{}) error
 		return err
 	}
 
-	log.Printf("[DEBUG] ECS service %s deleted.", *out.Service.ServiceArn)
+	log.Printf("[DEBUG] ECS service %s deleted.", d.Id())
 	return nil
 }
 
@@ -306,8 +354,10 @@ func buildFamilyAndRevisionFromARN(arn string) string {
 	return strings.Split(arn, "/")[1]
 }
 
-func buildIamRoleNameFromARN(arn string) string {
-	// arn:aws:iam::0123456789:role/EcsService
+// Expects the following ARNs:
+// arn:aws:iam::0123456789:role/EcsService
+// arn:aws:ecs:us-west-2:0123456789:cluster/radek-cluster
+func getNameFromARN(arn string) string {
 	return strings.Split(arn, "/")[1]
 }
 

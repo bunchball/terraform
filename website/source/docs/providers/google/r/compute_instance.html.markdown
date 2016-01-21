@@ -1,7 +1,7 @@
 ---
 layout: "google"
 page_title: "Google: google_compute_instance"
-sidebar_current: "docs-google-resource-instance"
+sidebar_current: "docs-google-compute-instance"
 description: |-
   Manages a VM instance resource within GCE.
 ---
@@ -82,8 +82,8 @@ The following arguments are supported:
   are not allowed to be used simultaneously.
 
 * `network_interface` - (Required) Networks to attach to the instance. This can be
-    specified multiple times for multiple networks. Structure is documented
-    below.
+    specified multiple times for multiple networks, but GCE is currently limited
+    to just 1. Structure is documented below.
 
 * `network` - (DEPRECATED, Required) Networks to attach to the instance. This can be
     specified multiple times for multiple networks. Structure is documented
@@ -133,6 +133,10 @@ The `access_config` block supports:
 * `nat_ip` - (Optional) The IP address that will be 1:1 mapped to the instance's network ip.  If not
   given, one will be generated.
 
+* `assigned_nat_ip` - (Optional) The IP address that is assigned to the
+  instance. If `nat_ip` is filled, it will appear here. If `nat_ip` is left
+  blank, the ephemeral assigned IP will appear here.
+
 (DEPRECATED) The `network` block supports:
 
 * `source` - (Required) The name of the network to attach this interface to.
@@ -144,6 +148,17 @@ The `service_account` block supports:
 
 * `scopes` - (Required) A list of service scopes. Both OAuth2 URLs and gcloud
     short names are supported.
+
+The `scheduling` block supports:
+
+* `preemptible` - (Optional) Is the instance preemptible.
+
+* `on_host_maintenance` - (Optional) Describes maintenance behavior for 
+    the instance. Can be MIGRATE or TERMINATE, for more info, read
+    [here](https://cloud.google.com/compute/docs/instances/setting-instance-scheduling-options)
+
+* `automatic_restart` - (Optional) Specifies if the instance should be
+    restarted if it was terminated by Compute Engine (not a user).
 
 ## Attributes Reference
 
