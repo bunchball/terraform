@@ -1,20 +1,11 @@
 package kubernetes
 
 import (
-	"encoding/json"
-	"log"
 	"strings"
-
+	"strconv"
 	"github.com/hashicorp/terraform/helper/schema"
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/util/yaml"
-
-	"bytes"
-	"fmt"
-	"github.com/hashicorp/terraform/helper/hashcode"
-
-	"strconv"
 )
 
 func resourceKubernetesPod() *schema.Resource {
@@ -58,11 +49,13 @@ func resourceKubernetesPod() *schema.Resource {
 				Type:     schema.TypeList,
 				Optional: true,
 				Computed: true,
+				ForceNew: true,
 				Elem:     &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"name": &schema.Schema{
 							Type: schema.TypeString,
 							Required: true,
+							ForceNew: true,
 						},
 						"image": &schema.Schema{
 							Type: schema.TypeString,
@@ -71,38 +64,29 @@ func resourceKubernetesPod() *schema.Resource {
 						"port": &schema.Schema{
 							Type: schema.TypeList,
 							Optional: true,
+							ForceNew: true,
 							Elem: &schema.Resource{
 								Schema: map[string]*schema.Schema{
 									"protocol": &schema.Schema{
 										Type: schema.TypeString,
 										Optional: true,
-										Default: "tcp",
+										Default: "TCP",
+										ForceNew: true,
 									},
 									"containerPort": &schema.Schema{
 										Type: schema.TypeString,
 										Required: true,
+										ForceNew: true,
 									},
 									"name": &schema.Schema{
 										Type: schema.TypeString,
 										Required: true,
+										ForceNew: true,
 									},
 								},
 							},
 						},
 					},
-				},
-			},
-
-			"spec": &schema.Schema{
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-				StateFunc: func(input interface{}) string {
-					s, err := normalizePodSpec(input.(string))
-					if err != nil {
-						log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
-					}
-					return s
 				},
 			},
 		},
@@ -112,7 +96,7 @@ func resourceKubernetesPod() *schema.Resource {
 func resourceKubernetesPodCreate(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 
-	spec, err := expandPodSpec(d.Get("spec").(string))
+	spec, err := constructPodSpec(d)
 	if err != nil {
 		return err
 	}
@@ -143,12 +127,6 @@ func resourceKubernetesPodCreate(d *schema.ResourceData, meta interface{}) error
 	return resourceKubernetesPodRead(d, meta)
 }
 
-type containerStruct struct {
-	Name string
-	Image string
-	Ports map[string]string
-}
-
 func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 	pod, err := c.Pods(d.Get("namespace").(string)).Get(d.Get("name").(string))
@@ -156,17 +134,11 @@ func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	//spec, err := flattenPodSpec(pod.Spec)
-	//if err != nil {
-	//	return err
-	//}
-	//d.Set("spec", spec)
 	d.Set("labels", pod.Labels)
-	//d.Set("spec", pod.Spec)
 	d.Set("nodeName", pod.Spec.NodeName)
 	d.Set("terminationGracePeriodSeconds", pod.Spec.TerminationGracePeriodSeconds)
 
-	var containers []interface{}
+	var containers []map[string]interface{}
 	for _, v := range pod.Spec.Containers {
 		var container = make(map[string]interface{})
 		container["name"] = v.Name
@@ -190,7 +162,7 @@ func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 func resourceKubernetesPodUpdate(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 
-	spec, err := expandPodSpec(d.Get("spec").(string))
+	spec, err := constructPodSpec(d)
 	if err != nil {
 		return err
 	}
@@ -223,85 +195,47 @@ func resourceKubernetesPodDelete(d *schema.ResourceData, meta interface{}) error
 	return err
 }
 
-func expandPodSpec(input string) (spec api.PodSpec, err error) {
-	r := strings.NewReader(input)
-	y := yaml.NewYAMLOrJSONDecoder(r, 4096)
+func constructPodSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
+	containers := d.Get("container").([]interface{})
+	for _, c_tf := range containers {
+		c_tf_map := c_tf.(map[string]interface{})
 
-	err = y.Decode(&spec)
-	if err != nil {
-		return
-	}
-	spec = setDefaultPodSpecValues(&spec)
-	return
-}
+		var c api.Container
+		c.Name = c_tf_map["name"].(string)
+		c.Image = c_tf_map["image"].(string)
 
-func flattenPodSpec(spec api.PodSpec) (string, error) {
-	b, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
-	}
+		ports := c_tf_map["port"].([]interface{})
+		for _, p_tf := range ports {
+			p_tf_map := p_tf.(map[string]interface{})
 
-	return string(b), nil
-}
+			var port api.ContainerPort
+			port.Name = p_tf_map["name"].(string)
 
-func normalizePodSpec(input string) (string, error) {
-	r := strings.NewReader(input)
-	y := yaml.NewYAMLOrJSONDecoder(r, 4096)
-	spec := api.PodSpec{}
-
-	err := y.Decode(&spec)
-	if err != nil {
-		return "", err
-	}
-
-	spec = setDefaultPodSpecValues(&spec)
-
-	b, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), nil
-}
-
-// This is to prevent detecting change when there's nothing to change
-func setDefaultPodSpecValues(spec *api.PodSpec) api.PodSpec {
-	if spec.ServiceAccountName == "" {
-		spec.ServiceAccountName = "default"
-	}
-	if spec.RestartPolicy == "" {
-		spec.RestartPolicy = "Always"
-	}
-	if spec.DNSPolicy == "" {
-		spec.DNSPolicy = "ClusterFirst"
-	}
-
-	for k, c := range spec.Containers {
-		if c.ImagePullPolicy == "" {
-			spec.Containers[k].ImagePullPolicy = "IfNotPresent"
-		}
-		if c.TerminationMessagePath == "" {
-			spec.Containers[k].TerminationMessagePath = "/dev/termination-log"
-		}
-
-		for _, p := range c.Ports {
-			if p.Protocol == "" {
-				p.Protocol = "TCP"
+			portNumInt, notInt := strconv.Atoi(p_tf_map["containerPort"].(string))
+			if notInt != nil {
+				return
 			}
+
+			//not sure where to put error checking. will do later
+			//if portNumInt > 1<<16 -1 {
+			//	return
+			//}
+
+			port.ContainerPort = portNumInt
+
+			switch protocol := strings.ToUpper(p_tf_map["protocol"].(string)); protocol {
+				case "TCP":
+					port.Protocol = api.ProtocolTCP
+				case "UDP":
+					port.Protocol = api.ProtocolUDP
+				default:
+					port.Protocol = api.ProtocolTCP
+					//probably should error out here if something invalid is put
+			}
+			c.Ports = append(c.Ports, port)
 		}
+		spec.Containers = append(spec.Containers, c)
 	}
-
-	return *spec
-}
-
-func resourceContainerHash(v interface{}) int {
-	var buf bytes.Buffer
-	m := v.(map[string]interface{})
-
-	//setting the hash based on the name only, insuffient but works for now
-	if v,ok := m["name"]; ok {
-		buf.WriteString(fmt.Sprintf("%v-", v.(string)))
-	}
-
-	return hashcode.String(buf.String())
+	
+	return spec, err
 }
