@@ -13,6 +13,8 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/hashicorp/terraform/helper/hashcode"
+
+	"strconv"
 )
 
 func resourceKubernetesPod() *schema.Resource {
@@ -53,8 +55,9 @@ func resourceKubernetesPod() *schema.Resource {
 				Computed: true,
 			},
 			"containers": &schema.Schema{
-				Type:     schema.TypeSet,
-				Required: true,
+				Type:     schema.TypeList,
+				Optional: true,
+				Computed: true,
 				Elem:     &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"name": &schema.Schema{
@@ -66,7 +69,7 @@ func resourceKubernetesPod() *schema.Resource {
 							Required: true,
 						},
 						"ports": &schema.Schema{
-							Type: schema.TypeSet,
+							Type: schema.TypeList,
 							Optional: true,
 							Elem: &schema.Resource{
 								Schema: map[string]*schema.Schema{
@@ -79,17 +82,21 @@ func resourceKubernetesPod() *schema.Resource {
 										Type: schema.TypeString,
 										Required: true,
 									},
+									"name": &schema.Schema{
+										Type: schema.TypeString,
+										Required: true,
+									},
 								},
 							},
 						},
 					},
 				},
-				Set: resourceContainerHash,
 			},
 
 			"spec": &schema.Schema{
 				Type:     schema.TypeString,
 				Required: true,
+				ForceNew: true,
 				StateFunc: func(input interface{}) string {
 					s, err := normalizePodSpec(input.(string))
 					if err != nil {
@@ -136,6 +143,12 @@ func resourceKubernetesPodCreate(d *schema.ResourceData, meta interface{}) error
 	return resourceKubernetesPodRead(d, meta)
 }
 
+type containerStruct struct {
+	Name string
+	Image string
+	Ports map[string]string
+}
+
 func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 	pod, err := c.Pods(d.Get("namespace").(string)).Get(d.Get("name").(string))
@@ -143,15 +156,33 @@ func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 		return err
 	}
 
-	spec, err := flattenPodSpec(pod.Spec)
-	if err != nil {
-		return err
-	}
-	d.Set("spec", spec)
+	//spec, err := flattenPodSpec(pod.Spec)
+	//if err != nil {
+	//	return err
+	//}
+	//d.Set("spec", spec)
 	d.Set("labels", pod.Labels)
 	//d.Set("spec", pod.Spec)
 	d.Set("nodeName", pod.Spec.NodeName)
 	d.Set("terminationGracePeriodSeconds", pod.Spec.TerminationGracePeriodSeconds)
+
+	var containers []interface{}
+	for _, v := range pod.Spec.Containers {
+		var container = make(map[string]interface{})
+		container["name"] = v.Name
+		container["image"] = v.Image
+		var portList []interface{}
+		for _, p := range v.Ports {
+			var portMap = make(map[string]interface{})
+			portMap["name"] = p.Name
+			portMap["containerPort"] = strconv.Itoa(p.ContainerPort)
+			portMap["protocol"] = p.Protocol 
+			portList = append(portList, portMap)
+		}
+		container["ports"] = portList
+		containers = append(containers, container)
+	}
+	d.Set("containers", containers)
 
 	return nil
 }
