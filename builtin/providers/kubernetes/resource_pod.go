@@ -54,7 +54,7 @@ func resourceKubernetesPod() *schema.Resource {
 				Optional: true,
 				Computed: true,
 			},
-			"containers": &schema.Schema{
+			"container": &schema.Schema{
 				Type:     schema.TypeList,
 				Optional: true,
 				Computed: true,
@@ -68,7 +68,7 @@ func resourceKubernetesPod() *schema.Resource {
 							Type: schema.TypeString,
 							Required: true,
 						},
-						"ports": &schema.Schema{
+						"port": &schema.Schema{
 							Type: schema.TypeList,
 							Optional: true,
 							Elem: &schema.Resource{
@@ -179,10 +179,10 @@ func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 			portMap["protocol"] = p.Protocol 
 			portList = append(portList, portMap)
 		}
-		container["ports"] = portList
+		container["port"] = portList
 		containers = append(containers, container)
 	}
-	d.Set("containers", containers)
+	d.Set("container", containers)
 
 	return nil
 }
