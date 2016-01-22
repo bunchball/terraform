@@ -9,6 +9,10 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/util/yaml"
+
+	"bytes"
+	"fmt"
+	"github.com/hashicorp/terraform/helper/hashcode"
 )
 
 func resourceKubernetesPod() *schema.Resource {
@@ -35,6 +39,52 @@ func resourceKubernetesPod() *schema.Resource {
 			"labels": &schema.Schema{
 				Type:     schema.TypeMap,
 				Optional: true,
+			},
+
+			"nodeName": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+
+			"terminationGracePeriodSeconds": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
+			"containers": &schema.Schema{
+				Type:     schema.TypeSet,
+				Required: true,
+				Elem:     &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"name": &schema.Schema{
+							Type: schema.TypeString,
+							Required: true,
+						},
+						"image": &schema.Schema{
+							Type: schema.TypeString,
+							Required: true,
+						},
+						"ports": &schema.Schema{
+							Type: schema.TypeSet,
+							Optional: true,
+							Elem: &schema.Resource{
+								Schema: map[string]*schema.Schema{
+									"protocol": &schema.Schema{
+										Type: schema.TypeString,
+										Optional: true,
+										Default: "tcp",
+									},
+									"containerPort": &schema.Schema{
+										Type: schema.TypeString,
+										Required: true,
+									},
+								},
+							},
+						},
+					},
+				},
+				Set: resourceContainerHash,
 			},
 
 			"spec": &schema.Schema{
@@ -99,7 +149,9 @@ func resourceKubernetesPodRead(d *schema.ResourceData, meta interface{}) error {
 	}
 	d.Set("spec", spec)
 	d.Set("labels", pod.Labels)
-	d.Set("spec", pod.Spec)
+	//d.Set("spec", pod.Spec)
+	d.Set("nodeName", pod.Spec.NodeName)
+	d.Set("terminationGracePeriodSeconds", pod.Spec.TerminationGracePeriodSeconds)
 
 	return nil
 }
@@ -209,4 +261,16 @@ func setDefaultPodSpecValues(spec *api.PodSpec) api.PodSpec {
 	}
 
 	return *spec
+}
+
+func resourceContainerHash(v interface{}) int {
+	var buf bytes.Buffer
+	m := v.(map[string]interface{})
+
+	//setting the hash based on the name only, insuffient but works for now
+	if v,ok := m["name"]; ok {
+		buf.WriteString(fmt.Sprintf("%v-", v.(string)))
+	}
+
+	return hashcode.String(buf.String())
 }
