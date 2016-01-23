@@ -12,43 +12,36 @@ import (
 )
 
 func resourceKubernetesReplicationController() *schema.Resource {
+
+	s := resourceMeta()
+
+	s["pod"] = &schema.Schema{
+		Type:     schema.TypeList, //this allows multiple values. should check for and reject that until I can figure something more clever
+		Optional: true,
+		Computed: true,
+		ForceNew: true,
+		Elem:     &schema.Resource{Schema: resourcePodSpec()},
+	}
+
+	s["spec"] = &schema.Schema{
+		Type:     schema.TypeString,
+		Required: true,
+		StateFunc: func(input interface{}) string {
+			src, err := normalizeReplicationControllerSpec(input.(string))
+			if err != nil {
+				log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
+			}
+			return src
+		},
+	}
+
 	return &schema.Resource{
 		Create: resourceKubernetesReplicationControllerCreate,
 		Read:   resourceKubernetesReplicationControllerRead,
 		Update: resourceKubernetesReplicationControllerUpdate,
 		Delete: resourceKubernetesReplicationControllerDelete,
 
-		Schema: map[string]*schema.Schema{
-			"name": &schema.Schema{
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"namespace": &schema.Schema{
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
-				Default:  api.NamespaceDefault,
-			},
-
-			"labels": &schema.Schema{
-				Type:     schema.TypeMap,
-				Optional: true,
-			},
-
-			"spec": &schema.Schema{
-				Type:     schema.TypeString,
-				Required: true,
-				StateFunc: func(input interface{}) string {
-					s, err := normalizeReplicationControllerSpec(input.(string))
-					if err != nil {
-						log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
-					}
-					return s
-				},
-			},
-		},
+		Schema: s,
 	}
 }
 

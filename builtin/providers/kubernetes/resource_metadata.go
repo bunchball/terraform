@@ -1,0 +1,38 @@
+package kubernetes
+
+import (
+	"github.com/hashicorp/terraform/helper/schema"
+	"k8s.io/kubernetes/pkg/api"
+)
+
+func resourceMeta() map[string]*schema.Schema {
+       return map[string]*schema.Schema{
+  	     	"name": &schema.Schema{
+  	     		Type:     schema.TypeString,
+  	     		Required: true,
+  	     		ForceNew: true,
+  	     	},
+
+  	     	"namespace": &schema.Schema{
+  	     		Type:     schema.TypeString,
+  	     		Optional: true,
+  	     		ForceNew: true,
+  	     		Default:  api.NamespaceDefault,
+  	     	},
+
+  	     	"labels": &schema.Schema{
+  	     		Type:     schema.TypeMap,
+  	     		Optional: true,
+  	     	},
+       }
+}
+
+func constructMeta(d *schema.ResourceData) (meta api.ObjectMeta, err error) {
+	
+	return meta, err
+}
+
+func extractMeta(d *schema.ResourceData, meta *api.ObjectMeta) (err error) {
+
+	return nil
+}
