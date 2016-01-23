@@ -14,6 +14,16 @@ import (
 func resourceKubernetesReplicationController() *schema.Resource {
 
 	s := resourceMeta()
+	s["replicas"] = &schema.Schema{
+		Type:     schema.TypeInt,
+		Optional: true,
+		//Required: true,
+	}
+	s["selector"] = &schema.Schema{
+		Type:     schema.TypeMap,
+		Optional: true,
+		//Required: true,
+	}
 
 	s["pod"] = &schema.Schema{
 		Type:     schema.TypeList, //this allows multiple values. should check for and reject that until I can figure something more clever
@@ -25,7 +35,9 @@ func resourceKubernetesReplicationController() *schema.Resource {
 
 	s["spec"] = &schema.Schema{
 		Type:     schema.TypeString,
-		Required: true,
+		//Required: true,
+		Optional: true,
+		Computed: true,
 		StateFunc: func(input interface{}) string {
 			src, err := normalizeReplicationControllerSpec(input.(string))
 			if err != nil {
@@ -48,6 +60,7 @@ func resourceKubernetesReplicationController() *schema.Resource {
 func resourceKubernetesReplicationControllerCreate(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 
+	//spec, err := constructReplicationControllerSpec(d)
 	spec, err := expandReplicationControllerSpec(d.Get("spec").(string))
 	if err != nil {
 		return err
@@ -86,13 +99,17 @@ func resourceKubernetesReplicationControllerRead(d *schema.ResourceData, meta in
 		return err
 	}
 
-	spec, err := flattenReplicationControllerSpec(rc.Spec)
+	err = extractReplicationControllerSpec(d, rc)
+	//spec, err := flattenReplicationControllerSpec(rc.Spec)
 	if err != nil {
 		return err
 	}
-	d.Set("spec", spec)
+	//d.Set("spec", spec)
+	//d.Set("spec", rc.Spec)
+
 	d.Set("labels", rc.Labels)
-	d.Set("spec", rc.Spec)
+	d.Set("selector", rc.Spec.Selector)
+	d.Set("replicas", rc.Spec.Replicas)
 
 	return nil
 }
@@ -171,4 +188,31 @@ func normalizeReplicationControllerSpec(input string) (string, error) {
 	}
 
 	return string(b), nil
+}
+
+func constructReplicationControllerSpec(d *schema.ResourceData) (spec api.ReplicationControllerSpec, err error) {
+	template, err := constructPodSpec(d)
+	spec.Template.Spec = template
+	spec.Replicas = d.Get("replicas").(int)
+	spec.Selector = d.Get("selector").(map[string]string)
+
+	return spec, err
+}
+
+func extractReplicationControllerSpec(d *schema.ResourceData, rc *api.ReplicationController) (err error) {
+	d.Set("selector", rc.Spec.Selector)
+	d.Set("labels", rc.ObjectMeta.Labels)
+	d.Set("pod", rc.Spec.Template.Spec) //ObjectMeta isn't handled properly...
+
+	//var containers []map[string]interface{}
+	//for _, container := range pod.Spec.Containers {
+	//	c, badContainer := extractContainerSpec(container)
+	//	if badContainer != nil {
+	//		return
+	//	}
+	//	containers = append(containers, c)
+	//}
+	//d.Set("container", containers)
+
+	return nil
 }
