@@ -63,6 +63,7 @@ func resourceKubernetesService() *schema.Resource {
 				"nodePort": &schema.Schema{
 					Type:     schema.TypeInt,
 					Optional: true,
+					Computed: true,
 					ForceNew: true,
 				},
 			},
@@ -123,6 +124,18 @@ func resourceKubernetesServiceRead(d *schema.ResourceData, meta interface{}) err
 	d.Set("selector", svc.Spec.Selector)
 	d.Set("clusterIP", svc.Spec.ClusterIP)
 	d.Set("type", svc.Spec.Type)
+
+	switch stype := svc.Spec.Type; stype {
+		case "NodePort":
+			d.Set("type", "NodePort")
+		case "ClusterIP":
+			d.Set("type", "ClusterIP")
+		case "LoadBalancer":
+			d.Set("type", "LoadBalancer")
+		default:
+			log.Printf("[ERROR] Unknown Kubernetes Service Type: %q", err.Error())
+	}
+
 	var ports []map[string]interface{}
 	for _, v := range svc.Spec.Ports {
 		port := make(map[string]interface{})
