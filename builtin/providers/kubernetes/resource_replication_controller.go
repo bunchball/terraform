@@ -83,7 +83,7 @@ func resourceKubernetesReplicationControllerRead(d *schema.ResourceData, meta in
 		return err
 	}
 
-	return nil
+	return err
 }
 
 func resourceKubernetesReplicationControllerUpdate(d *schema.ResourceData, meta interface{}) error {
