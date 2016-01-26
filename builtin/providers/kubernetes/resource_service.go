@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"strings"
 	"reflect"
+	"log"
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"k8s.io/kubernetes/pkg/api"
@@ -23,6 +24,13 @@ func resourceKubernetesService() *schema.Resource {
 		Type:     schema.TypeString,
 		Optional: true,
 		Computed: true,
+	}
+
+	s["type"] = &schema.Schema{
+		Type:     schema.TypeString,
+		Optional: true,
+		Computed: true,
+		ForceNew: true,
 	}
 
 	s["port"] = &schema.Schema{
@@ -114,6 +122,7 @@ func resourceKubernetesServiceRead(d *schema.ResourceData, meta interface{}) err
 	d.Set("labels", svc.Labels)
 	d.Set("selector", svc.Spec.Selector)
 	d.Set("clusterIP", svc.Spec.ClusterIP)
+	d.Set("type", svc.Spec.Type)
 	var ports []map[string]interface{}
 	for _, v := range svc.Spec.Ports {
 		port := make(map[string]interface{})
@@ -185,6 +194,18 @@ func constructServiceSpec(d *schema.ResourceData) (spec api.ServiceSpec, err err
 	}
 	spec.Selector = selector
 	spec.ClusterIP = d.Get("clusterIP").(string)
+
+	switch stype := d.Get("type").(string); stype {
+		case "NodePort":
+			spec.Type = api.ServiceTypeNodePort
+		case "ClusterIP":
+			spec.Type = api.ServiceTypeClusterIP
+		case "LoadBalancer":
+			spec.Type = api.ServiceTypeLoadBalancer
+		default:
+			log.Printf("[ERROR] Unknown Kubernetes Service Type: %q", err.Error())
+	}
+			
 
 	var ports []api.ServicePort
 	for _, p := range d.Get("port").([]interface{}) {
