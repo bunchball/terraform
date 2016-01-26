@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"strconv"
 	"fmt"
 	"reflect"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -85,6 +86,7 @@ func constructPodRCSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
 	return spec, err
 }
 
+//this almost certainly can be combined with the extractPodTemplateSpec somehow
 func extractPodSpec(d *schema.ResourceData, pod *api.Pod) (err error) {
 	d.Set("labels", pod.Labels)
 	d.Set("nodeName", pod.Spec.NodeName)
@@ -106,19 +108,23 @@ func extractPodSpec(d *schema.ResourceData, pod *api.Pod) (err error) {
 
 func extractPodTemplateSpec(d *schema.ResourceData, pod *api.PodTemplateSpec) (pod_map map[string]interface{}, err error) {
 
-	pod_map = make(map[string]interface{})
-	pod_map["labels"] = pod.Labels
-	pod_map["terminationGracePeriodSeconds"] = pod.Spec.TerminationGracePeriodSeconds
-
-	var containers []map[string]interface{}
-	for _, container := range pod.Spec.Containers {
-		c, badContainer := extractContainerSpec(container)
-		if badContainer != nil {
-			return
+	var c_holder []interface{}
+	for _, cv := range pod.Spec.Containers {
+		kc, c_err := extractContainerSpec (cv)
+		if c_err != nil {
+			var nilMap map[string]interface{}
+			return nilMap, c_err
 		}
-		containers = append(containers, c)
+		c_holder = append(c_holder, kc)
 	}
-	pod_map["container"] = containers
+
+	pod_map = make(map[string]interface{})
+	pod_map["container"] = c_holder
+	pod_map["labels"] = pod.Labels
+	pod_map["nodeName"] = pod.Spec.NodeName
+	pod_map["namespace"] = pod.Namespace //currently not set because pods are inline to RC. handled on the RC side
+	pod_map["name"] = pod.Name //this currently doesn't work properly because pods are still inline and don't define a name
+	pod_map["terminationGracePeriodSeconds"] = strconv.FormatInt(*pod.Spec.TerminationGracePeriodSeconds,10)
 
 	return pod_map, err
 }
