@@ -1,10 +1,9 @@
 package kubernetes
 
 import (
-	"encoding/json"
+	"strconv"
 	"log"
 	"strings"
-
 	"github.com/hashicorp/terraform/helper/schema"
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
@@ -33,20 +32,6 @@ func resourceKubernetesReplicationController() *schema.Resource {
 		Elem:     &schema.Resource{Schema: resourcePodSpec()},
 	}
 
-	//s["spec"] = &schema.Schema{
-	//	Type:     schema.TypeString,
-	//	//Required: true,
-	//	Optional: true,
-	//	Computed: true,
-	//	StateFunc: func(input interface{}) string {
-	//		src, err := normalizeReplicationControllerSpec(input.(string))
-	//		if err != nil {
-	//			log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
-	//		}
-	//		return src
-	//	},
-	//}
-
 	return &schema.Resource{
 		Create: resourceKubernetesReplicationControllerCreate,
 		Read:   resourceKubernetesReplicationControllerRead,
@@ -61,18 +46,9 @@ func resourceKubernetesReplicationControllerCreate(d *schema.ResourceData, meta 
 	c := meta.(*client.Client)
 
 	spec, err := constructReplicationControllerSpec(d)
-
-	
-	//spec, err := expandReplicationControllerSpec(d.Get("spec").(string))
 	if err != nil {
 		return err
 	}
-
-	//specString, err = flattenReplicationControllerSpec(spec)
-	//if err != nil {
-	//	return err
-	//}
-	//log.Printf("[DEBUG] rc spec: %v", specString)
 
 	l := d.Get("labels").(map[string]interface{})
 	labels := make(map[string]string, len(l))
@@ -97,7 +73,7 @@ func resourceKubernetesReplicationControllerCreate(d *schema.ResourceData, meta 
 
 	d.SetId(string(rc.UID))
 
-	return nil // resourceKubernetesReplicationControllerRead(d, meta)
+	return resourceKubernetesReplicationControllerRead(d, meta)
 }
 
 func resourceKubernetesReplicationControllerRead(d *schema.ResourceData, meta interface{}) error {
@@ -108,16 +84,9 @@ func resourceKubernetesReplicationControllerRead(d *schema.ResourceData, meta in
 	}
 
 	err = extractReplicationControllerSpec(d, rc)
-	//spec, err := flattenReplicationControllerSpec(rc.Spec)
 	if err != nil {
 		return err
 	}
-	//d.Set("spec", spec)
-	//d.Set("spec", rc.Spec)
-
-	d.Set("labels", rc.Labels)
-	d.Set("selector", rc.Spec.Selector)
-	d.Set("replicas", rc.Spec.Replicas)
 
 	return nil
 }
@@ -169,35 +138,6 @@ func expandReplicationControllerSpec(input string) (spec api.ReplicationControll
 	return
 }
 
-func flattenReplicationControllerSpec(spec api.ReplicationControllerSpec) (string, error) {
-	b, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), nil
-}
-
-func normalizeReplicationControllerSpec(input string) (string, error) {
-	r := strings.NewReader(input)
-	y := yaml.NewYAMLOrJSONDecoder(r, 4096)
-	spec := api.ReplicationControllerSpec{}
-
-	err := y.Decode(&spec)
-	if err != nil {
-		return "", err
-	}
-
-	// TODO: Add/ignore default structures, e.g. template.spec.restartPolicy = Always
-
-	b, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), nil
-}
-
 func constructReplicationControllerSpec(d *schema.ResourceData) (spec api.ReplicationControllerSpec, err error) {
 
 	template, err := constructPodRCSpec(d)
@@ -231,15 +171,35 @@ func constructReplicationControllerSpec(d *schema.ResourceData) (spec api.Replic
 }
 
 func extractReplicationControllerSpec(d *schema.ResourceData, rc *api.ReplicationController) (err error) {
-	d.Set("selector", rc.Spec.Selector)
-	d.Set("labels", rc.ObjectMeta.Labels)
 
-	pod, err := extractPodTemplateSpec(rc.Spec.Template) //I'm not abstracting this well enough. It's not portable to rc
-	var pod_array [1]map[string]interface{}
-	pod_array[0] = pod
-	//var pod_array [1]string
-	//pod_array[0] = "test"
-	d.Set("pod", pod_array)
+	kPodTemplateSpec := rc.Spec.Template
+	kPodSpec := kPodTemplateSpec.Spec
+	var kc_holder []interface{}
+	for _, cv := range kPodSpec.Containers {
+		kc := make(map[string]interface{})
+		kc["name"] = cv.Name
+		kc["image"] = cv.Image
+		var portList []interface{}
+		for _, p := range cv.Ports {
+			var portMap = make(map[string]interface{})
+			portMap["name"] = p.Name
+			portMap["containerPort"] = strconv.Itoa(p.ContainerPort)
+			portMap["protocol"] = p.Protocol 
+			portList = append(portList, portMap)
+		}
+		kc["port"] = portList
+		kc_holder = append(kc_holder, kc)
+	}
+	kContainers := make(map[string]interface{})
+	kContainers["container"] = kc_holder
+	kContainers["labels"] = kPodTemplateSpec.Labels
+	kContainers["nodeName"] = kPodSpec.NodeName
+	kContainers["namespace"] = rc.Namespace
+	kContainers["name"] = kPodTemplateSpec.Name //this currently doesn't work properly because pods are still inline and don't define a name
+	kContainers["terminationGracePeriodSeconds"] = strconv.FormatInt(*kPodSpec.TerminationGracePeriodSeconds,10)
+	var kPod []interface{}
+	kPod = append(kPod, kContainers)
+	d.Set("pod", kPod)
 
 	return err
 }

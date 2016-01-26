@@ -9,7 +9,7 @@ func resourceMeta() map[string]*schema.Schema {
        return map[string]*schema.Schema{
   	     	"name": &schema.Schema{
   	     		Type:     schema.TypeString,
-  	     		Required: true,
+  	     		Optional: true, //this really should be required, but the RC/PodTemplate crap is interfering. Will add the validation elsewhere?
   	     		ForceNew: true,
   	     	},
 
