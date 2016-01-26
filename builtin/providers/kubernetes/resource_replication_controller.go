@@ -33,19 +33,19 @@ func resourceKubernetesReplicationController() *schema.Resource {
 		Elem:     &schema.Resource{Schema: resourcePodSpec()},
 	}
 
-	s["spec"] = &schema.Schema{
-		Type:     schema.TypeString,
-		//Required: true,
-		Optional: true,
-		Computed: true,
-		StateFunc: func(input interface{}) string {
-			src, err := normalizeReplicationControllerSpec(input.(string))
-			if err != nil {
-				log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
-			}
-			return src
-		},
-	}
+	//s["spec"] = &schema.Schema{
+	//	Type:     schema.TypeString,
+	//	//Required: true,
+	//	Optional: true,
+	//	Computed: true,
+	//	StateFunc: func(input interface{}) string {
+	//		src, err := normalizeReplicationControllerSpec(input.(string))
+	//		if err != nil {
+	//			log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
+	//		}
+	//		return src
+	//	},
+	//}
 
 	return &schema.Resource{
 		Create: resourceKubernetesReplicationControllerCreate,
@@ -60,11 +60,19 @@ func resourceKubernetesReplicationController() *schema.Resource {
 func resourceKubernetesReplicationControllerCreate(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 
-	//spec, err := constructReplicationControllerSpec(d)
-	spec, err := expandReplicationControllerSpec(d.Get("spec").(string))
+	spec, err := constructReplicationControllerSpec(d)
+
+	
+	//spec, err := expandReplicationControllerSpec(d.Get("spec").(string))
 	if err != nil {
 		return err
 	}
+
+	//specString, err = flattenReplicationControllerSpec(spec)
+	//if err != nil {
+	//	return err
+	//}
+	//log.Printf("[DEBUG] rc spec: %v", specString)
 
 	l := d.Get("labels").(map[string]interface{})
 	labels := make(map[string]string, len(l))
@@ -89,7 +97,7 @@ func resourceKubernetesReplicationControllerCreate(d *schema.ResourceData, meta 
 
 	d.SetId(string(rc.UID))
 
-	return resourceKubernetesReplicationControllerRead(d, meta)
+	return nil // resourceKubernetesReplicationControllerRead(d, meta)
 }
 
 func resourceKubernetesReplicationControllerRead(d *schema.ResourceData, meta interface{}) error {
@@ -191,10 +199,33 @@ func normalizeReplicationControllerSpec(input string) (string, error) {
 }
 
 func constructReplicationControllerSpec(d *schema.ResourceData) (spec api.ReplicationControllerSpec, err error) {
-	template, err := constructPodSpec(d)
-	spec.Template.Spec = template
+
+	template, err := constructPodRCSpec(d)
+	if err != nil {
+		var thing api.ReplicationControllerSpec
+		return thing, err
+	}
+	
+	var templateSpec api.PodTemplateSpec
+	templateSpec.Spec = template
+
+	label_map := make(map[string]string)
+	for k, v := range d.Get("pod.0.labels").(map[string]interface{}) {
+		log.Printf("[DEBUG]label: %#v %#v", k, v)
+		label_map[k] = v.(string)
+	}
+	templateSpec.Labels = label_map
+
+	spec.Template = &templateSpec
+
 	spec.Replicas = d.Get("replicas").(int)
-	spec.Selector = d.Get("selector").(map[string]string)
+
+	selector_map := make(map[string]string)
+	for k, v := range d.Get("selector").(map[string]interface{}) {
+		log.Printf("[DEBUG]selector: %#v %#v", k, v)
+		selector_map[k] = v.(string)
+	}
+	spec.Selector = selector_map
 
 	return spec, err
 }
@@ -202,17 +233,13 @@ func constructReplicationControllerSpec(d *schema.ResourceData) (spec api.Replic
 func extractReplicationControllerSpec(d *schema.ResourceData, rc *api.ReplicationController) (err error) {
 	d.Set("selector", rc.Spec.Selector)
 	d.Set("labels", rc.ObjectMeta.Labels)
-	d.Set("pod", rc.Spec.Template.Spec) //ObjectMeta isn't handled properly...
 
-	//var containers []map[string]interface{}
-	//for _, container := range pod.Spec.Containers {
-	//	c, badContainer := extractContainerSpec(container)
-	//	if badContainer != nil {
-	//		return
-	//	}
-	//	containers = append(containers, c)
-	//}
-	//d.Set("container", containers)
+	pod, err := extractPodTemplateSpec(rc.Spec.Template) //I'm not abstracting this well enough. It's not portable to rc
+	var pod_array [1]map[string]interface{}
+	pod_array[0] = pod
+	//var pod_array [1]string
+	//pod_array[0] = "test"
+	d.Set("pod", pod_array)
 
-	return nil
+	return err
 }
