@@ -1,61 +1,79 @@
 package kubernetes
 
 import (
-	"encoding/json"
-	"log"
 	"strings"
+	"reflect"
 
 	"github.com/hashicorp/terraform/helper/schema"
 	"k8s.io/kubernetes/pkg/api"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/util/yaml"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 func resourceKubernetesService() *schema.Resource {
+	s := resourceMeta()
+
+	s["selector"] = &schema.Schema{
+		Type:     schema.TypeMap,
+		Required: true,
+	}
+
+	s["clusterIP"] = &schema.Schema{
+		Type:     schema.TypeString,
+		Optional: true,
+		Computed: true,
+	}
+
+	s["port"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"name": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
+				},
+				"protocol": &schema.Schema{
+					Type:     schema.TypeString,
+					Optional: true,
+					Default:  "TCP",
+					ForceNew: true,
+				},
+				"port": &schema.Schema{
+					Type:     schema.TypeInt,
+					Required: true,
+					ForceNew: true,
+				},
+				"targetPort": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
+				},
+				"nodePort": &schema.Schema{
+					Type:     schema.TypeInt,
+					Optional: true,
+					ForceNew: true,
+				},
+			},
+		},
+	}
+
 	return &schema.Resource{
 		Create: resourceKubernetesServiceCreate,
 		Read:   resourceKubernetesServiceRead,
 		Update: resourceKubernetesServiceUpdate,
 		Delete: resourceKubernetesServiceDelete,
-
-		Schema: map[string]*schema.Schema{
-			"name": &schema.Schema{
-				Type:     schema.TypeString,
-				Required: true,
-				ForceNew: true,
-			},
-
-			"namespace": &schema.Schema{
-				Type:     schema.TypeString,
-				Optional: true,
-				ForceNew: true,
-				Default:  api.NamespaceDefault,
-			},
-
-			"labels": &schema.Schema{
-				Type:     schema.TypeMap,
-				Optional: true,
-			},
-
-			"spec": &schema.Schema{
-				Type:     schema.TypeString,
-				Required: true,
-				StateFunc: func(input interface{}) string {
-					s, err := normalizeServiceSpec(input.(string))
-					if err != nil {
-						log.Printf("[ERROR] Normalising spec failed: %q", err.Error())
-					}
-					return s
-				},
-			},
-		},
+		Schema: s,
 	}
 }
 
 func resourceKubernetesServiceCreate(d *schema.ResourceData, meta interface{}) error {
 	c := meta.(*client.Client)
 
-	spec, err := expandServiceSpec(d.Get("spec").(string))
+	spec, err := constructServiceSpec(d)
 	if err != nil {
 		return err
 	}
@@ -93,13 +111,20 @@ func resourceKubernetesServiceRead(d *schema.ResourceData, meta interface{}) err
 		return err
 	}
 
-	spec, err := flattenServiceSpec(svc.Spec)
-	if err != nil {
-		return err
-	}
-	d.Set("spec", spec)
 	d.Set("labels", svc.Labels)
-	d.Set("spec", svc.Spec)
+	d.Set("selector", svc.Spec.Selector)
+	d.Set("clusterIP", svc.Spec.ClusterIP)
+	var ports []map[string]interface{}
+	for _, v := range svc.Spec.Ports {
+		port := make(map[string]interface{})
+		port["name"] = v.Name
+		port["port"] = v.Port
+		port["nodePort"] = v.NodePort
+		port["protocol"] = v.Protocol
+		port["targetPort"] = v.TargetPort.String()
+		ports = append(ports, port)
+	}
+	d.Set("port", ports)
 
 	return nil
 }
@@ -149,45 +174,53 @@ func expandServiceSpec(input string) (spec api.ServiceSpec, err error) {
 		return
 	}
 
-	spec = setDefaultServiceSpecValues(&spec)
 	return
 }
 
-func flattenServiceSpec(spec api.ServiceSpec) (string, error) {
-	b, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
+func constructServiceSpec(d *schema.ResourceData) (spec api.ServiceSpec, err error) {
+	
+	selector := make(map[string]string)
+	for k, s := range d.Get("selector").(map[string]interface{}) {
+		selector[k] = s.(string)
 	}
+	spec.Selector = selector
+	spec.ClusterIP = d.Get("clusterIP").(string)
 
-	return string(b), nil
-}
+	var ports []api.ServicePort
+	for _, p := range d.Get("port").([]interface{}) {
+		p_map := p.(map[string]interface{})
 
-func normalizeServiceSpec(input string) (string, error) {
-	r := strings.NewReader(input)
-	y := yaml.NewYAMLOrJSONDecoder(r, 4096)
-	spec := api.ServiceSpec{}
+		var port api.ServicePort
+		port.Name = p_map["name"].(string)
 
-	err := y.Decode(&spec)
-	if err != nil {
-		return "", err
+		switch protocol := strings.ToUpper(p_map["protocol"].(string)); protocol {
+			case "TCP":
+				port.Protocol = api.ProtocolTCP
+			case "UDP":
+				port.Protocol = api.ProtocolUDP
+			default:
+				port.Protocol = api.ProtocolTCP
+				//probably should error out here if something invalid is put
+		}
+
+		portNumInt := p_map["port"].(int)
+		port.Port = portNumInt
+
+		switch typ := reflect.TypeOf(p_map["targetPort"]).Kind(); typ {
+			case reflect.String:
+				port.TargetPort = util.NewIntOrStringFromString(p_map["targetPort"].(string))
+			case reflect.Int:
+				port.TargetPort = util.NewIntOrStringFromInt(p_map["targetPort"].(int))
+			default:
+				panic("Not a string or int")	
+		}
+
+		nodePortNumInt := p_map["nodePort"].(int)
+		port.NodePort = nodePortNumInt
+
+		ports = append(ports, port)
 	}
-
-	spec = setDefaultServiceSpecValues(&spec)
-
-	b, err := json.Marshal(spec)
-	if err != nil {
-		return "", err
-	}
-
-	return string(b), nil
-}
-
-func setDefaultServiceSpecValues(spec *api.ServiceSpec) api.ServiceSpec {
-	if spec.Type == "" {
-		spec.Type = "ClusterIP"
-	}
-	if spec.SessionAffinity == "" {
-		spec.SessionAffinity = "None"
-	}
-	return *spec
+	spec.Ports = ports
+	
+	return spec, err
 }
