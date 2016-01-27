@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"log"
 	"strconv"
 	"fmt"
 	"reflect"
@@ -30,6 +31,42 @@ func resourcePodSpec() map[string]*schema.Schema {
 		ForceNew: true,
 		Elem:     &schema.Resource{Schema: resourceContainerSpec()},
 	}
+
+	s["volume"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Computed: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"name": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
+				},
+				//here follows the types of volumeSources. Parameter checking is mostly handled by the client for now
+				//every type is multually exclusive with every other type
+				"emptyDir": &schema.Schema{
+					Type:     schema.TypeMap,
+					Optional: true,
+					ForceNew: true,
+					//Default:  make(map[string]interface{}),
+					//ConflictsWith: []string{
+					//	"hostPath",
+					//},
+				},
+				"hostPath": &schema.Schema{
+					Type:     schema.TypeMap,
+					Optional: true,
+					ForceNew: true,
+					//Default:  make(map[string]interface{}),
+					//ConflictsWith: []string{
+					//	"emptyDir",
+					//},
+				},
+			},
+		},
+	}
 	return s
 }
 
@@ -50,6 +87,48 @@ func constructPodSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
 		}
 	} else {
 		panic("nil container")
+	}
+
+	volumes := d.Get("volume").([]interface{})
+	for k, v := range volumes {
+		log.Printf("[DEBUG] here k: %#v v %#v", k, v)
+	}
+		
+	for vk, v := range volumes {
+		v_map := v.(map[string]interface{})
+		var vol api.Volume
+		vol.Name = v_map["name"].(string)
+		var vs api.VolumeSource
+		log.Printf("[DEBUG] volume: %#v", vk)
+		switch {
+			case len(v_map["emptyDir"].(map[string]interface{})) > 0:
+				var vi api.EmptyDirVolumeSource
+				switch m := v_map["emptyDir"].(map[string]interface{})["medium"].(string); m {
+					case "Memory":
+						vi.Medium = api.StorageMediumMemory
+					default:
+						vi.Medium = api.StorageMediumDefault
+				}
+				vs.EmptyDir = &vi
+			case len(v_map["hostPath"].(map[string]interface{})) > 0:
+				var vi api.HostPathVolumeSource
+				for tk, tv := range v_map["hostPath"].(map[string]interface{}) {
+					log.Printf("[DEBUG] k: %#v v: %#v", tk, tv)
+				}
+				switch v_map["hostPath"].(map[string]interface{})["path"] {
+					case nil:
+						log.Printf("[DEBUG] hostPath: %#v", v_map["hostPath"])
+						panic("path shouldn't be nil")
+					default:
+						vi.Path = v_map["hostPath"].(map[string]interface{})["path"].(string)
+				}
+				vs.HostPath = &vi
+			default:
+				panic("not a known volumeSource type")
+		}
+		vol.VolumeSource = vs
+		
+		spec.Volumes = append(spec.Volumes, vol)
 	}
 
 	return spec, err
@@ -83,6 +162,36 @@ func constructPodRCSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
 		panic("nilTest!")
 	}
 
+	volumes := d.Get("pod.0.volume").([]interface{})
+	for _, v := range volumes {
+		v_map := v.(map[string]interface{})
+		var vol api.Volume
+		vol.Name = v_map["name"].(string)
+		var vs api.VolumeSource
+		switch {
+			//case v_map["emptyDir"] != nil:
+			case len(v_map["emptyDir"].(map[string]interface{})) > 0:
+				var vi api.EmptyDirVolumeSource
+				switch m := v_map["emptyDir"].(map[string]interface{})["medium"]; m {
+					case "Memory":
+						vi.Medium = api.StorageMediumMemory
+					default:
+						vi.Medium = api.StorageMediumDefault
+				}
+				vs.EmptyDir = &vi
+			//case v_map["hostPath"] != nil:
+			case len(v_map["hostPath"].(map[string]interface{})) > 0:
+				var vi api.HostPathVolumeSource
+				vi.Path = v_map["hostPath"].(map[string]interface{})["path"].(string)
+				vs.HostPath = &vi
+			default:
+				panic("not a known volumeSource type")
+		}
+		vol.VolumeSource = vs
+		
+		spec.Volumes = append(spec.Volumes, vol)
+	}
+
 	return spec, err
 }
 
@@ -103,6 +212,31 @@ func extractPodSpec(d *schema.ResourceData, pod *api.Pod) (err error) {
 	}
 	d.Set("container", containers)
 
+	var volumes []map[string]interface{}
+	for _, volume := range pod.Spec.Volumes {
+		v :=  make(map[string]interface{})
+		v["name"] = volume.Name
+		switch {
+			case volume.EmptyDir != nil:
+				emptyDir := make(map[string]string)
+				switch {
+					case volume.EmptyDir.Medium == api.StorageMediumMemory:
+						emptyDir["medium"] = "Memory"
+					case volume.EmptyDir.Medium == api.StorageMediumDefault:
+						emptyDir["medium"] = ""
+				}
+				v["emptyDir"] = emptyDir
+			case volume.HostPath != nil:
+				hostPath := make(map[string]string)
+				hostPath["path"] = volume.HostPath.Path
+				v["hostPath"] = hostPath
+			default:
+				panic("unknown volume type")
+		}
+		volumes = append(volumes, v)
+	}
+	d.Set("volume", volumes)
+
 	return nil
 }
 
@@ -118,8 +252,33 @@ func extractPodTemplateSpec(d *schema.ResourceData, pod *api.PodTemplateSpec) (p
 		c_holder = append(c_holder, kc)
 	}
 
+	var volumes []map[string]interface{}
+	for _, volume := range pod.Spec.Volumes {
+		v :=  make(map[string]interface{})
+		v["name"] = volume.Name
+		switch {
+			case volume.EmptyDir != nil:
+				emptyDir := make(map[string]string)
+				switch {
+					case volume.EmptyDir.Medium == api.StorageMediumMemory:
+						emptyDir["medium"] = "Memory"
+					case volume.EmptyDir.Medium == api.StorageMediumDefault:
+						emptyDir["medium"] = ""
+				}
+				v["emptyDir"] = emptyDir
+			case volume.HostPath != nil:
+				hostPath := make(map[string]string)
+				hostPath["path"] = volume.HostPath.Path
+				v["hostPath"] = hostPath
+			default:
+				panic("unknown volume type")
+		}
+		volumes = append(volumes, v)
+	}
+
 	pod_map = make(map[string]interface{})
 	pod_map["container"] = c_holder
+	pod_map["volume"] = volumes
 	pod_map["labels"] = pod.Labels
 	pod_map["nodeName"] = pod.Spec.NodeName
 	pod_map["namespace"] = pod.Namespace //currently not set because pods are inline to RC. handled on the RC side

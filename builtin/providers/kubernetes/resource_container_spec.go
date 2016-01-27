@@ -18,6 +18,56 @@ func resourceContainerSpec() map[string]*schema.Schema {
 			Type:     schema.TypeString,
 			Required: true,
 		},
+		"volumeMount": &schema.Schema{
+			Type:     schema.TypeList,
+			Optional: true,
+			ForceNew: true,
+			Elem: &schema.Resource{
+				Schema: map[string]*schema.Schema{
+					"name": &schema.Schema{
+						Type:     schema.TypeString,
+						Required: true,
+						ForceNew: true,
+					},
+					"readOnly": &schema.Schema{
+						Type:     schema.TypeBool,
+						Optional: true,
+						Default:  "TCP",
+						ForceNew: true,
+					},
+					"mountPath": &schema.Schema{
+						Type:     schema.TypeString,
+						Required: true,
+						ForceNew: true,
+					},
+				},
+			},
+		},
+		"env": &schema.Schema{
+			Type:     schema.TypeList,
+			Optional: true,
+			ForceNew: true,
+			Elem: &schema.Resource{
+				Schema: map[string]*schema.Schema{
+					"name": &schema.Schema{
+						Type:     schema.TypeString,
+						Required: true,
+						ForceNew: true,
+					},
+					"value": &schema.Schema{
+						Type:     schema.TypeString,
+						Optional: true,
+						Default:  "TCP",
+						ForceNew: true,
+					},
+					//"valueFrom": &schema.Schema{ //this is complicated so will add it later
+					//	Type:     schema.TypeString,
+					//	Required: true,
+					//	ForceNew: true,
+					//},
+				},
+			},
+		},
 		"port": &schema.Schema{
 			Type:     schema.TypeList,
 			Optional: true,
@@ -80,16 +130,39 @@ func constructContainerSpec(c_tf_map map[string]interface{}) (c api.Container, e
 		}
 		c.Ports = append(c.Ports, port)
 	}
+
+	env := c_tf_map["env"].([]interface{})
+	for _, e_tf := range env {
+		e_tf_map := e_tf.(map[string]interface{})
+
+		var e api.EnvVar
+		e.Name = e_tf_map["name"].(string)
+		e.Value = e_tf_map["value"].(string)
+
+		c.Env = append(c.Env, e)
+	}
+
+	vol := c_tf_map["volumeMount"].([]interface{})
+	for _, v_tf := range vol {
+		v_tf_map := v_tf.(map[string]interface{})
+
+		var v api.VolumeMount
+		v.Name = v_tf_map["name"].(string)
+		v.ReadOnly = v_tf_map["readOnly"].(bool)
+		v.MountPath = v_tf_map["mountPath"].(string)
+
+		c.VolumeMounts = append(c.VolumeMounts, v)
+	}
 	err = nil
 	return c, err
 }
 
-func extractContainerSpec (v api.Container) (container map[string]interface{}, err error) {
+func extractContainerSpec (c api.Container) (container map[string]interface{}, err error) {
 	container = make(map[string]interface{})
-	container["name"] = v.Name
-	container["image"] = v.Image
+	container["name"] = c.Name
+	container["image"] = c.Image
 	var portList []interface{}
-	for _, p := range v.Ports {
+	for _, p := range c.Ports {
 		var portMap = make(map[string]interface{})
 		portMap["name"] = p.Name
 		portMap["containerPort"] = strconv.Itoa(p.ContainerPort)
@@ -97,6 +170,26 @@ func extractContainerSpec (v api.Container) (container map[string]interface{}, e
 		portList = append(portList, portMap)
 	}
 	container["port"] = portList
+
+	var envList []interface{}
+	for _, e := range c.Env {
+		var envMap = make(map[string]interface{})
+		envMap["name"] = e.Name
+		envMap["value"] = e.Value
+		envList = append(envList, envMap)
+	}
+	container["env"] = envList
+
+	var volList []interface{}
+	for _, v := range c.VolumeMounts {
+		var volMap = make(map[string]interface{})
+		volMap["name"] = v.Name
+		volMap["readOnly"] = v.ReadOnly
+		volMap["mountPath"] = v.MountPath
+		volList = append(volList, volMap)
+	}
+	container["volumeMount"] = volList
+
 	err = nil
 	return container, err
 }
