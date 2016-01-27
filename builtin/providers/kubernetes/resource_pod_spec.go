@@ -64,6 +64,15 @@ func resourcePodSpec() map[string]*schema.Schema {
 					//	"emptyDir",
 					//},
 				},
+				"awsElasticBlockStore": &schema.Schema{
+					Type:     schema.TypeMap,
+					Optional: true,
+					ForceNew: true,
+					//Default:  make(map[string]interface{}),
+					//ConflictsWith: []string{
+					//	"emptyDir",
+					//},
+				},
 			},
 		},
 	}
@@ -123,6 +132,31 @@ func constructPodSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
 						vi.Path = v_map["hostPath"].(map[string]interface{})["path"].(string)
 				}
 				vs.HostPath = &vi
+			case len(v_map["awsElasticBlockStore"].(map[string]interface{})) > 0:
+				var vi api.AWSElasticBlockStoreVolumeSource
+				awsElasticBlockStore_map := v_map["awsElasticBlockStore"].(map[string]interface{})
+				switch awsElasticBlockStore_map["volumeID"] {
+					case nil:
+						panic("volumeID shouldn't be nil")
+					default:
+						vi.VolumeID  = awsElasticBlockStore_map["volumeID"].(string)
+				}
+				switch awsElasticBlockStore_map["fsType"] {
+					case nil:
+					default:
+						vi.FSType = awsElasticBlockStore_map["fsType"].(string)
+				}
+				switch awsElasticBlockStore_map["partition"] {
+					case nil:
+					default:
+						vi.Partition = awsElasticBlockStore_map["partition"].(int)
+				}
+				switch awsElasticBlockStore_map["readOnly"] {
+					case nil:
+					default:
+						vi.ReadOnly = awsElasticBlockStore_map["readOnly"].(bool)
+				}
+				vs.AWSElasticBlockStore = &vi
 			default:
 				panic("not a known volumeSource type")
 		}
@@ -184,6 +218,31 @@ func constructPodRCSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
 				var vi api.HostPathVolumeSource
 				vi.Path = v_map["hostPath"].(map[string]interface{})["path"].(string)
 				vs.HostPath = &vi
+			case len(v_map["awsElasticBlockStore"].(map[string]interface{})) > 0:
+				var vi api.AWSElasticBlockStoreVolumeSource
+				awsElasticBlockStore_map := v_map["awsElasticBlockStore"].(map[string]interface{})
+				switch awsElasticBlockStore_map["volumeID"] {
+					case nil:
+						panic("volumeID shouldn't be nil")
+					default:
+						vi.VolumeID  = awsElasticBlockStore_map["volumeID"].(string)
+				}
+				switch awsElasticBlockStore_map["fsType"] {
+					case nil:
+					default:
+						vi.FSType = awsElasticBlockStore_map["fsType"].(string)
+				}
+				switch awsElasticBlockStore_map["partition"] {
+					case nil:
+					default:
+						vi.Partition = awsElasticBlockStore_map["partition"].(int)
+				}
+				switch awsElasticBlockStore_map["readOnly"] {
+					case nil:
+					default:
+						vi.ReadOnly = awsElasticBlockStore_map["readOnly"].(bool)
+				}
+				vs.AWSElasticBlockStore = &vi
 			default:
 				panic("not a known volumeSource type")
 		}
@@ -230,6 +289,13 @@ func extractPodSpec(d *schema.ResourceData, pod *api.Pod) (err error) {
 				hostPath := make(map[string]string)
 				hostPath["path"] = volume.HostPath.Path
 				v["hostPath"] = hostPath
+			case volume.AWSElasticBlockStore != nil:
+				awsElasticBlockStore := make(map[string]interface{})
+				awsElasticBlockStore["volumeID"]  = volume.AWSElasticBlockStore.VolumeID
+				awsElasticBlockStore["fsType"]    = volume.AWSElasticBlockStore.FSType
+				awsElasticBlockStore["partition"] = volume.AWSElasticBlockStore.Partition
+				awsElasticBlockStore["readOnly"]  = volume.AWSElasticBlockStore.ReadOnly
+				v["awsElasticBlockStore"] = awsElasticBlockStore
 			default:
 				panic("unknown volume type")
 		}
@@ -270,6 +336,13 @@ func extractPodTemplateSpec(d *schema.ResourceData, pod *api.PodTemplateSpec) (p
 				hostPath := make(map[string]string)
 				hostPath["path"] = volume.HostPath.Path
 				v["hostPath"] = hostPath
+			case volume.AWSElasticBlockStore != nil:
+				awsElasticBlockStore := make(map[string]interface{})
+				awsElasticBlockStore["volumeID"]  = volume.AWSElasticBlockStore.VolumeID
+				awsElasticBlockStore["fsType"]    = volume.AWSElasticBlockStore.FSType
+				awsElasticBlockStore["partition"] = volume.AWSElasticBlockStore.Partition
+				awsElasticBlockStore["readOnly"]  = volume.AWSElasticBlockStore.ReadOnly
+				v["awsElasticBlockStore"] = awsElasticBlockStore
 			default:
 				panic("unknown volume type")
 		}
