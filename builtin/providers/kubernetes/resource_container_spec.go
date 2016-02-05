@@ -8,92 +8,116 @@ import (
 )
 
 func resourceContainerSpec() map[string]*schema.Schema {
-	return map[string]*schema.Schema{
-		"name": &schema.Schema{
-			Type:     schema.TypeString,
-			Required: true,
-			ForceNew: true,
-		},
-		"image": &schema.Schema{
-			Type:     schema.TypeString,
-			Required: true,
-		},
-		"volumeMount": &schema.Schema{
-			Type:     schema.TypeList,
-			Optional: true,
-			ForceNew: true,
-			Elem: &schema.Resource{
-				Schema: map[string]*schema.Schema{
-					"name": &schema.Schema{
-						Type:     schema.TypeString,
-						Required: true,
-						ForceNew: true,
-					},
-					"readOnly": &schema.Schema{
-						Type:     schema.TypeBool,
-						Optional: true,
-						Default:  "TCP",
-						ForceNew: true,
-					},
-					"mountPath": &schema.Schema{
-						Type:     schema.TypeString,
-						Required: true,
-						ForceNew: true,
-					},
+	s := make(map[string]*schema.Schema)
+
+	s["name"] = &schema.Schema{
+		Type:     schema.TypeString,
+		Required: true,
+		ForceNew: true,
+	}
+
+	s["image"] = &schema.Schema{
+		Type:     schema.TypeString,
+		Required: true,
+	}
+
+	s["volumeMount"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"name": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
 				},
-			},
-		},
-		"env": &schema.Schema{
-			Type:     schema.TypeList,
-			Optional: true,
-			ForceNew: true,
-			Elem: &schema.Resource{
-				Schema: map[string]*schema.Schema{
-					"name": &schema.Schema{
-						Type:     schema.TypeString,
-						Required: true,
-						ForceNew: true,
-					},
-					"value": &schema.Schema{
-						Type:     schema.TypeString,
-						Optional: true,
-						Default:  "TCP",
-						ForceNew: true,
-					},
-					//"valueFrom": &schema.Schema{ //this is complicated so will add it later
-					//	Type:     schema.TypeString,
-					//	Required: true,
-					//	ForceNew: true,
-					//},
+				"readOnly": &schema.Schema{
+					Type:     schema.TypeBool,
+					Optional: true,
+					Default:  "TCP",
+					ForceNew: true,
 				},
-			},
-		},
-		"port": &schema.Schema{
-			Type:     schema.TypeList,
-			Optional: true,
-			ForceNew: true,
-			Elem: &schema.Resource{
-				Schema: map[string]*schema.Schema{
-					"protocol": &schema.Schema{
-						Type:     schema.TypeString,
-						Optional: true,
-						Default:  "TCP",
-						ForceNew: true,
-					},
-					"containerPort": &schema.Schema{
-						Type:     schema.TypeString,
-						Required: true,
-						ForceNew: true,
-					},
-					"name": &schema.Schema{
-						Type:     schema.TypeString,
-						Required: true,
-						ForceNew: true,
-					},
+				"mountPath": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
 				},
 			},
 		},
 	}
+
+	s["env"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"name": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
+				},
+				"value": &schema.Schema{
+					Type:     schema.TypeString,
+					Optional: true,
+					Default:  "TCP",
+					ForceNew: true,
+				},
+				//"valueFrom": &schema.Schema{ //this is complicated so will add it later
+				//	Type:     schema.TypeString,
+				//	Required: true,
+				//	ForceNew: true,
+				//},
+			},
+		},
+	}
+
+	s["port"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem: &schema.Resource{
+			Schema: map[string]*schema.Schema{
+				"protocol": &schema.Schema{
+					Type:     schema.TypeString,
+					Optional: true,
+					Default:  "TCP",
+					ForceNew: true,
+				},
+				"containerPort": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
+				},
+				"name": &schema.Schema{
+					Type:     schema.TypeString,
+					Required: true,
+					ForceNew: true,
+				},
+			},
+		},
+	}
+
+	s["livenessProbe"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem: &schema.Resource{
+			Schema: resourceProbeSpec(),
+		},
+	}
+
+	s["readinessProbe"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem: &schema.Resource{
+			Schema: resourceProbeSpec(),
+		},
+	}
+
+	return s
 }
 
 func constructContainerSpec(c_tf_map map[string]interface{}) (c api.Container, err error) {
@@ -153,7 +177,19 @@ func constructContainerSpec(c_tf_map map[string]interface{}) (c api.Container, e
 
 		c.VolumeMounts = append(c.VolumeMounts, v)
 	}
-	err = nil
+
+	if l_probe_map, ok := c_tf_map["livenessProbe"]; ok {
+		l_probe, e := constructProbeSpec(l_probe_map.(map[string]interface{}))
+		err = e
+		c.LivenessProbe = &l_probe
+	}
+
+	if r_probe_map, ok := c_tf_map["readinessProbe"]; ok {
+		r_probe, e := constructProbeSpec(r_probe_map.(map[string]interface{}))
+		err = e
+		c.ReadinessProbe = &r_probe
+	}
+
 	return c, err
 }
 
@@ -190,6 +226,17 @@ func extractContainerSpec (c api.Container) (container map[string]interface{}, e
 	}
 	container["volumeMount"] = volList
 
-	err = nil
+	if c.LivenessProbe != nil {
+		l_probe, e := extractProbeSpec(c.LivenessProbe)
+		err = e
+		container["livenessProbe"] = l_probe
+	}
+
+	if c.ReadinessProbe != nil {
+		r_probe, e := extractProbeSpec(c.ReadinessProbe)
+		err = e
+		container["readinessProbe"] = r_probe
+	}
+
 	return container, err
 }
