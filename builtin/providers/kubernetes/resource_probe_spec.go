@@ -3,10 +3,11 @@ package kubernetes
 import (
 	"github.com/hashicorp/terraform/helper/schema"
 	"k8s.io/kubernetes/pkg/api"
-//	"strconv"
-	"reflect"
+	"strconv"
+//	"reflect"
 	"k8s.io/kubernetes/pkg/util"
 	"strings"
+	"regexp"
 )
 
 func resourceProbeSpec() map[string]*schema.Schema {
@@ -20,7 +21,7 @@ func resourceProbeSpec() map[string]*schema.Schema {
 			Optional: true,
 		},
 		"exec": &schema.Schema{
-			Type:     schema.TypeMap,
+			Type:     schema.TypeList,
 			Optional: true,
 			ForceNew: true,
 			Elem: &schema.Resource{
@@ -29,6 +30,9 @@ func resourceProbeSpec() map[string]*schema.Schema {
 						Type:     schema.TypeList,
 						Required: true,
 						ForceNew: true,
+						Elem:     &schema.Schema {
+							Type: schema.TypeString,
+						},
 					},
 				},
 			},
@@ -66,46 +70,63 @@ func resourceProbeSpec() map[string]*schema.Schema {
 }
 
 func constructProbeSpec(probe_map map[string]interface{}) (probe api.Probe, err error) {
-	probe.InitialDelaySeconds = probe_map["initialDelaySeconds"].(int64)
-	probe.TimeoutSeconds      = probe_map["timeoutSeconds"].(int64)
+	probe.InitialDelaySeconds = int64(probe_map["initialDelaySeconds"].(int))
+	probe.TimeoutSeconds      = int64(probe_map["timeoutSeconds"].(int))
 	
 	var h api.Handler
 
 	if exec_i, ok := probe_map["exec"]; ok {
-		exec_list := exec_i.([]string)
-		var exec api.ExecAction
-		exec.Command = exec_list
-		h.Exec = &exec
+		if len(exec_i.([]interface{})) > 0 {
+			exec_map := exec_i.([]interface{})[0].(map[string]interface{})
+			//exec_map := exec_i.(map[string]interface{})
+			if exec_list, ok := exec_map["command"]; ok {
+				var exec api.ExecAction
+
+				var c_list []string
+				for _, c := range exec_list.([]interface{}) {
+					c_list = append(c_list, c.(string))
+				}
+				exec.Command = c_list
+				h.Exec = &exec
+			}
+		}
 	}
 
 	if httpGet_i, ok := probe_map["httpGet"]; ok {
 		httpGet_map := httpGet_i.(map[string]interface{})
-		var httpGet api.HTTPGetAction
-		httpGet.Path = httpGet_map["path"].(string)
+		if len(httpGet_map) > 0 {
+			var httpGet api.HTTPGetAction
+			httpGet.Path = httpGet_map["path"].(string)
 
-		switch typ := reflect.TypeOf(httpGet_map["port"]).Kind(); typ {
-			case reflect.String:
-				httpGet.Port = util.NewIntOrStringFromString(httpGet_map["port"].(string))
-			case reflect.Int:
-				httpGet.Port = util.NewIntOrStringFromInt(httpGet_map["port"].(int))
-			default:
-				panic("Not a string or int")	
+
+			port := httpGet_map["port"].(string)
+			if number, _ := regexp.MatchString("[0-9]+", port); number {
+				num_port, _ := strconv.Atoi(port)
+				httpGet.Port = util.NewIntOrStringFromInt(num_port)
+			} else if name, _  := regexp.MatchString("[a-z0-9]([a-z0-9-]*[a-z0-9])*", port); name {
+				httpGet.Port = util.NewIntOrStringFromString(port)
+			}
+
+			if host, ok := httpGet_map["host"]; ok {
+				httpGet.Host = host.(string)
+			}
+
+			if scheme_i, ok := httpGet_map["scheme"]; ok {
+				switch scheme := strings.ToUpper(scheme_i.(string)); scheme {
+					case "HTTP":
+						httpGet.Scheme = api.URISchemeHTTP
+					case "HTTPS":
+						httpGet.Scheme = api.URISchemeHTTPS
+					default:
+						panic("not a valid scheme")
+				}
+			}
+
+			h.HTTPGet = &httpGet
 		}
-
-		httpGet.Host = httpGet_map["host"].(string)
-
-		switch scheme := strings.ToUpper(httpGet_map["scheme"].(string)); scheme {
-			case "HTTP":
-				httpGet.Scheme = api.URISchemeHTTP
-			case "HTTPS":
-				httpGet.Scheme = api.URISchemeHTTPS
-			default:
-				panic("not a valid scheme")
-		}
-
-
-		h.HTTPGet = &httpGet
 	}
+	probe.Handler = h
+
 	return probe, err
 }
 

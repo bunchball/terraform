@@ -240,6 +240,7 @@ func constructServiceSpec(d *schema.ResourceData) (spec api.ServiceSpec, err err
 		portNumInt := p_map["port"].(int)
 		port.Port = portNumInt
 
+		//this isn't going to work like you think. It's always a string, so if you put an int, kube will get mad
 		switch typ := reflect.TypeOf(p_map["targetPort"]).Kind(); typ {
 			case reflect.String:
 				port.TargetPort = util.NewIntOrStringFromString(p_map["targetPort"].(string))

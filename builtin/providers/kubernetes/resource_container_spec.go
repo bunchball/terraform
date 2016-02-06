@@ -178,16 +178,22 @@ func constructContainerSpec(c_tf_map map[string]interface{}) (c api.Container, e
 		c.VolumeMounts = append(c.VolumeMounts, v)
 	}
 
-	if l_probe_map, ok := c_tf_map["livenessProbe"]; ok {
-		l_probe, e := constructProbeSpec(l_probe_map.(map[string]interface{}))
-		err = e
-		c.LivenessProbe = &l_probe
+	if l_probe_i, ok := c_tf_map["livenessProbe"]; ok {
+		if l_probe_list := l_probe_i.([]interface{}); len(l_probe_list) > 0 {
+			l_probe_map := l_probe_list[0].(map[string]interface{})
+			l_probe, e := constructProbeSpec(l_probe_map)
+			err = e
+			c.LivenessProbe = &l_probe
+		}
 	}
 
-	if r_probe_map, ok := c_tf_map["readinessProbe"]; ok {
-		r_probe, e := constructProbeSpec(r_probe_map.(map[string]interface{}))
-		err = e
-		c.ReadinessProbe = &r_probe
+	if r_probe_i, ok := c_tf_map["readinessProbe"]; ok {
+		if r_probe_list := r_probe_i.([]interface{}); len(r_probe_list) > 0 {
+			r_probe_map := r_probe_list[0].(map[string]interface{})
+			r_probe, e := constructProbeSpec(r_probe_map)
+			err = e
+			c.ReadinessProbe = &r_probe
+		}
 	}
 
 	return c, err
