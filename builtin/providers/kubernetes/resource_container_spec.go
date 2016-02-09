@@ -35,7 +35,6 @@ func resourceContainerSpec() map[string]*schema.Schema {
 				"readOnly": &schema.Schema{
 					Type:     schema.TypeBool,
 					Optional: true,
-					Default:  "TCP",
 					ForceNew: true,
 				},
 				"mountPath": &schema.Schema{
