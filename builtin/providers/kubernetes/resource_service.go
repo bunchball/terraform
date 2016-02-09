@@ -141,7 +141,9 @@ func resourceKubernetesServiceRead(d *schema.ResourceData, meta interface{}) err
 		port := make(map[string]interface{})
 		port["name"] = v.Name
 		port["port"] = v.Port
-		port["nodePort"] = v.NodePort
+		if &v.NodePort != nil {
+			port["nodePort"] = v.NodePort
+		}
 		port["protocol"] = v.Protocol
 		port["targetPort"] = v.TargetPort.String()
 		ports = append(ports, port)
@@ -215,8 +217,10 @@ func constructServiceSpec(d *schema.ResourceData) (spec api.ServiceSpec, err err
 			spec.Type = api.ServiceTypeClusterIP
 		case "LoadBalancer":
 			spec.Type = api.ServiceTypeLoadBalancer
+		case "":
+			//nothing to do. kubernetes will use the default
 		default:
-			log.Printf("[ERROR] Unknown Kubernetes Service Type: %q", err.Error())
+			log.Printf("[DEBUG] Unknown Kubernetes Service Type: %s", stype)
 	}
 			
 
@@ -250,8 +254,9 @@ func constructServiceSpec(d *schema.ResourceData) (spec api.ServiceSpec, err err
 				panic("Not a string or int")	
 		}
 
-		nodePortNumInt := p_map["nodePort"].(int)
-		port.NodePort = nodePortNumInt
+		if nodePort, ok := p_map["nodePort"]; ok {
+			port.NodePort = nodePort.(int)
+		}
 
 		ports = append(ports, port)
 	}
