@@ -117,6 +117,24 @@ func resourceContainerSpec() map[string]*schema.Schema {
 		},
 	}
 
+	s["command"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem:     &schema.Schema {
+			Type: schema.TypeString,
+		},
+	}
+
+	s["args"] = &schema.Schema{
+		Type:     schema.TypeList,
+		Optional: true,
+		ForceNew: true,
+		Elem:     &schema.Schema {
+			Type: schema.TypeString,
+		},
+	}
+
 	return s
 }
 
@@ -196,6 +214,22 @@ func constructContainerSpec(c_tf_map map[string]interface{}) (c api.Container, e
 		}
 	}
 
+	if command_list, ok := c_tf_map["command"]; ok {
+		var c_list []string
+		for _, c := range command_list.([]interface{}) {
+			c_list = append(c_list, c.(string))
+		}
+		c.Command = c_list
+	}
+
+	if args_list, ok := c_tf_map["args"]; ok {
+		var a_list []string
+		for _, c := range args_list.([]interface{}) {
+			a_list = append(a_list, c.(string))
+		}
+		c.Args = a_list
+	}
+
 	return c, err
 }
 
@@ -242,6 +276,14 @@ func extractContainerSpec (c api.Container) (container map[string]interface{}, e
 		r_probe, e := extractProbeSpec(c.ReadinessProbe)
 		err = e
 		container["readinessProbe"] = r_probe
+	}
+
+	if c.Command != nil {
+		container["command"] = c.Command
+	}
+
+	if c.Args != nil {
+		container["args"] = c.Args
 	}
 
 	return container, err
