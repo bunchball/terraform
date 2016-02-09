@@ -32,6 +32,12 @@ func resourcePodSpec() map[string]*schema.Schema {
 		Elem:     &schema.Resource{Schema: resourceContainerSpec()},
 	}
 
+	s["dnsPolicy"] = &schema.Schema{
+		Type:     schema.TypeString,
+		Optional: true,
+		Computed: true,
+	}
+
 	s["volume"] = &schema.Schema{
 		Type:     schema.TypeList,
 		Optional: true,
@@ -196,6 +202,17 @@ func constructPodRCSpec(d *schema.ResourceData) (spec api.PodSpec, err error) {
 		panic("nilTest!")
 	}
 
+	if dnsPolicy_i, ok := d.GetOk("pod.0.dnsPolicy"); ok {
+		switch dnsPolicy := dnsPolicy_i.(string); dnsPolicy {
+			case "Default":
+				spec.DNSPolicy = api.DNSDefault
+			case "ClusterFirst":
+				spec.DNSPolicy = api.DNSClusterFirst
+			default:
+				log.Printf("[DEBUG] Unrecognized DNSPolicy: %s", dnsPolicy)
+		}
+	}
+
 	volumes := d.Get("pod.0.volume").([]interface{})
 	for _, v := range volumes {
 		v_map := v.(map[string]interface{})
@@ -357,6 +374,7 @@ func extractPodTemplateSpec(d *schema.ResourceData, pod *api.PodTemplateSpec) (p
 	pod_map["namespace"] = pod.Namespace //currently not set because pods are inline to RC. handled on the RC side
 	pod_map["name"] = pod.Name //this currently doesn't work properly because pods are still inline and don't define a name
 	pod_map["terminationGracePeriodSeconds"] = strconv.FormatInt(*pod.Spec.TerminationGracePeriodSeconds,10)
+	pod_map["dnsPolicy"] = pod.Spec.DNSPolicy
 
 	return pod_map, err
 }
